@@ -1,6 +1,6 @@
 # Instant WebGIS Viewer — QGIS Plugin
 
-**Export any QGIS vector layer to a fully interactive shareable HTML map in one click.**
+**Export any QGIS vector or raster layer to a fully interactive shareable HTML map in one click.**
 
 No server. No Apache. No configuration. Just click Export and share!
 
@@ -11,12 +11,13 @@ No server. No Apache. No configuration. Just click Export and share!
 | Feature | Description |
 |---|---|
 | 🎨 **Auto QGIS Styling** | Reads your QGIS layer colours and applies them to the HTML map |
+| 🎨 **Colour Picker** | Change vector layer colours interactively in the HTML map |
 | 📊 **Statistics Panel** | Feature count, total length (km), total area (km²), CRS, field count |
 | 📋 **Attribute Table** | Full table with pagination (100 rows/page), click row to zoom to feature |
 | 🔍 **Feature Search** | Search any attribute value across all layers |
 | 📍 **Feature Info Popup** | Click any feature to see all its attributes |
 | 🗺 **9 Basemaps** | OSM, USGS Imagery, Topo, Carto Dark/Light, ESRI Street/Imagery, BrightGray, None |
-| 📏 **Measurement Tool** | Measure distance and area on the map |
+| 📱 **QR Code Sharing** | Upload map and get QR code — scan with phone to open full interactive map |
 | 🖨 **Print Button** | One-click print-ready map output |
 | 📴 **Works Offline** | Exported HTML is fully self-contained, no internet needed to view |
 
@@ -24,10 +25,14 @@ No server. No Apache. No configuration. Just click Export and share!
 
 ## Supported Layer Types
 
-- ✅ Point, Line, and Polygon layers
-- ✅ Any CRS (auto-reprojected to WGS84)
-- ✅ Shapefile, GeoPackage, GeoJSON, CSV with geometry
-- ❌ Raster layers (not supported)
+| Layer Type | Supported |
+|---|---|
+| Vector Point | ✅ |
+| Vector Line | ✅ |
+| Vector Polygon | ✅ |
+| Raster (GeoTIFF, Satellite etc.) | ✅ |
+| Any CRS (auto-reprojected to WGS84) | ✅ |
+| Shapefile, GeoPackage, GeoJSON, CSV | ✅ |
 
 ---
 
@@ -53,7 +58,7 @@ No server. No Apache. No configuration. Just click Export and share!
 6. Open the HTML file in any browser
 
 ### To open on mobile
-Send the HTML file to your phone via WhatsApp or Email — it opens directly in the mobile browser and works offline.
+Click **Share / QR** in the exported map → Generate QR Code → scan with phone camera → full interactive map opens!
 
 ---
 
@@ -73,4 +78,4 @@ Copyright (C) 2026 Ballu Harish
 
 **Ballu Harish**
 Email: harishmanjulason@gmail.com
-GitHub: https://github.com/HariMSS/instant_webgis_viewer
+GitHub: https://github.com/HariMSS-WebGIS/instant_webgis_viewer
