@@ -12,7 +12,7 @@ from qgis.PyQt.QtWidgets import (
     QListWidgetItem, QFileDialog, QDialogButtonBox,
     QMessageBox, QProgressBar, QApplication, QCheckBox
 )
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, QT_VERSION_STR
 from qgis.core import (QgsProject, QgsVectorLayer, QgsRasterLayer,
     QgsCoordinateReferenceSystem, QgsCoordinateTransform,
     QgsRectangle, QgsMapRendererParallelJob, QgsMapSettings)
@@ -20,6 +20,23 @@ from qgis.PyQt.QtCore import QSize
 from qgis.PyQt.QtGui import QColor
 from .layer_utils import get_layer_style, compute_stats, export_geojson
 from . import html_builder
+
+from qgis.PyQt.QtCore import QIODevice
+
+# Qt6 compatibility helpers
+_qt6 = QT_VERSION_STR.startswith('6')
+RichText       = Qt.TextFormat.RichText               if _qt6 else Qt.RichText
+AlignCenter    = Qt.AlignmentFlag.AlignCenter          if _qt6 else Qt.AlignCenter
+Checked        = Qt.CheckState.Checked                 if _qt6 else Qt.Checked
+Unchecked      = Qt.CheckState.Unchecked               if _qt6 else Qt.Unchecked
+UserRole       = Qt.ItemDataRole.UserRole              if _qt6 else Qt.UserRole
+ItemIsEnabled  = Qt.ItemFlag.ItemIsEnabled             if _qt6 else Qt.ItemIsEnabled
+DB_Ok          = QDialogButtonBox.StandardButton.Ok     if _qt6 else QDialogButtonBox.Ok
+DB_Cancel      = QDialogButtonBox.StandardButton.Cancel if _qt6 else QDialogButtonBox.Cancel
+MB_Ok          = QMessageBox.StandardButton.Ok          if _qt6 else QMessageBox.Ok
+MB_Info        = QMessageBox.Icon.Information           if _qt6 else QMessageBox.Information
+MB_Action      = QMessageBox.ButtonRole.ActionRole      if _qt6 else QMessageBox.ActionRole
+IODevice_Write = QIODevice.OpenModeFlag.WriteOnly       if _qt6 else QIODevice.WriteOnly
 
 
 class ExportDialog(QDialog):
@@ -37,7 +54,7 @@ class ExportDialog(QDialog):
 
         info = QLabel('<b style="font-size:11pt">Instant WebGIS Viewer</b><br>'
                       '<small>Export QGIS layers to an interactive shareable HTML map</small>')
-        info.setTextFormat(Qt.RichText)
+        info.setTextFormat(RichText)
         L.addWidget(info)
 
         g1 = QGroupBox('Step 1 — Select layers')
@@ -83,12 +100,12 @@ class ExportDialog(QDialog):
 
         self.progress = QProgressBar(); self.progress.hide()
         self.status   = QLabel('');    self.status.hide()
-        self.status.setAlignment(Qt.AlignCenter)
+        self.status.setAlignment(AlignCenter)
         L.addWidget(self.progress); L.addWidget(self.status)
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.button(QDialogButtonBox.Ok).setText('Export Map')
-        btns.button(QDialogButtonBox.Ok).setStyleSheet(
+        btns = QDialogButtonBox(DB_Ok | DB_Cancel)
+        btns.button(DB_Ok).setText('Export Map')
+        btns.button(DB_Ok).setStyleSheet(
             'background:#1e64c8;color:white;padding:7px 22px;'
             'font-weight:bold;border-radius:4px;font-size:10pt;')
         btns.accepted.connect(self._export)
@@ -105,22 +122,22 @@ class ExportDialog(QDialog):
             item = QListWidgetItem()
             if isinstance(layer, QgsVectorLayer):
                 item.setText(f'  {layer.name()}  (Vector — {layer.featureCount():,} features)')
-                item.setCheckState(Qt.Checked)
+                item.setCheckState(Checked)
             else:
                 item.setText(f'  {layer.name()}  (Raster)')
-                item.setCheckState(Qt.Checked)
-            item.setData(Qt.UserRole, layer)
+                item.setCheckState(Checked)
+            item.setData(UserRole, layer)
             self.layer_list.addItem(item)
 
     def _sel_all(self):
         for i in range(self.layer_list.count()):
             it = self.layer_list.item(i)
-            if it.flags() & Qt.ItemIsEnabled:
-                it.setCheckState(Qt.Checked)
+            if it.flags() & ItemIsEnabled:
+                it.setCheckState(Checked)
 
     def _sel_none(self):
         for i in range(self.layer_list.count()):
-            self.layer_list.item(i).setCheckState(Qt.Unchecked)
+            self.layer_list.item(i).setCheckState(Unchecked)
 
     def _browse(self):
         p, _ = QFileDialog.getSaveFileName(
@@ -134,8 +151,8 @@ class ExportDialog(QDialog):
         layers = []
         for i in range(self.layer_list.count()):
             item = self.layer_list.item(i)
-            if item.checkState() == Qt.Checked:
-                lyr = item.data(Qt.UserRole)
+            if item.checkState() == Checked:
+                lyr = item.data(UserRole)
                 if lyr.name() not in seen_names:
                     seen_names.add(lyr.name())
                     layers.append(lyr)
@@ -198,7 +215,7 @@ class ExportDialog(QDialog):
             # ── Post-export dialog with sharing guidance ──────────────────────
             msg = QMessageBox(self)
             msg.setWindowTitle('Map Exported!')
-            msg.setIcon(QMessageBox.Information)
+            msg.setIcon(MB_Info)
 
             total     = sum(l['count'] for l in layers_data)
             share_tips = (
@@ -210,11 +227,11 @@ class ExportDialog(QDialog):
             )
 
             msg.setText(share_tips)
-            msg.setTextFormat(Qt.RichText)
+            msg.setTextFormat(RichText)
 
-            ob = msg.addButton('Open in Browser', QMessageBox.ActionRole)
-            msg.addButton(QMessageBox.Ok)
-            msg.exec_()
+            ob = msg.addButton('Open in Browser', MB_Action)
+            msg.addButton(MB_Ok)
+            msg.exec()
 
             if msg.clickedButton() == ob:
                 webbrowser.open('file:///' + out.replace('\\', '/'))
@@ -229,7 +246,7 @@ class ExportDialog(QDialog):
         import base64, tempfile, os
         try:
             from qgis.core import QgsMapRendererParallelJob, QgsMapSettings
-            from qgis.PyQt.QtCore import QSize, QBuffer, QByteArray, QIODevice
+            from qgis.PyQt.QtCore import QSize, QBuffer, QByteArray
             from qgis.PyQt.QtGui import QColor, QImage
 
             # Get layer extent in WGS84
@@ -252,7 +269,7 @@ class ExportDialog(QDialog):
 
             # Convert to base64 string — embedded in HTML, no external file needed
             buf  = QBuffer()
-            buf.open(QIODevice.WriteOnly)
+            buf.open(IODevice_Write)
             img.save(buf, 'PNG')
             b64  = base64.b64encode(buf.data()).decode('ascii')
             data_url = 'data:image/png;base64,' + b64

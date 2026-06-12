@@ -34,4 +34,4 @@ class QuickShareMap:
                 'Please load at least one layer in QGIS first.')
             return
         from .export_dialog import ExportDialog
-        ExportDialog(self.iface, self.iface.mainWindow()).exec_()
+        ExportDialog(self.iface, self.iface.mainWindow()).exec()

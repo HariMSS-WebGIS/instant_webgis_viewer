@@ -1,10 +1,10 @@
 [general]
 name=Instant WebGIS Viewer
 qgisMinimumVersion=3.16
-qgisMaximumVersion=3.99
+qgisMaximumVersion=4.99
 description=Export QGIS vector and raster layers to a fully interactive shareable HTML WebGIS map in one click. No server, no Apache, no configuration needed.
-version=0.1
-author=Ballu Harish
+version=0.2
+author=Ballu Harish, Hrishikesh Tambe
 email=harishmanjulason@gmail.com
 about=Instant WebGIS Viewer exports any QGIS vector or raster layer to a beautiful self-contained HTML map that works in any browser. Features include: automatic QGIS layer colour and style application, colour picker for vector layers, statistics panel, attribute table with pagination, feature search, click-to-inspect feature info popup, 9 basemap options, opacity control, print button, QR code mobile sharing. Works offline. No server required.
 tracker=https://github.com/HariMSS-WebGIS/instant_webgis_viewer/issues
@@ -13,8 +13,9 @@ tags=export,html,leaflet,web map,geojson,share,statistics,attribute table,search
 homepage=https://github.com/HariMSS-WebGIS/instant_webgis_viewer
 category=Web
 icon=icon.png
-experimental=True
+experimental=False
 deprecated=False
 server=False
 hasProcessingProvider=no
-changelog=0.1 - Initial release
+changelog=0.2 - QGIS 4.x compatibility added, experimental flag removed
+    0.1 - Initial release
