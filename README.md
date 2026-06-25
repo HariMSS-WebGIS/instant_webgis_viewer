@@ -1,4 +1,12 @@
-# Instant WebGIS Viewer — QGIS Plugin
+# Instant WebGIS Viewer — QGIS Plugin by Ballu Harish
+
+**Author:** Ballu Harish | WebGIS Developer, INCOIS Hyderabad  
+**Plugin ID:** 5413  
+**Download:** https://plugins.qgis.org/plugins/instant_webgis_viewer/  
+**Portfolio:** https://harimss-webgis.github.io/Website-Harish/  
+**GeoSpy Game:** https://harimss-webgis.github.io/geo-quest-finder/  
+
+---
 
 **Export any QGIS vector or raster layer to a fully interactive shareable HTML map in one click.**
 
