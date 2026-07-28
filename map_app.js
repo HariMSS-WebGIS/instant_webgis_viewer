@@ -2,11 +2,15 @@
 /* Quick Share Map App */
 /* Quick Share Map - map_app.js */
 
-// Read data from safe JSON script tags (immune to special characters)
-var LAYERS  = JSON.parse(document.getElementById('qsm-data').textContent || '[]');
-var OPTIONS = JSON.parse(document.getElementById('qsm-opts').textContent || '{}');
-// Debug: log layer count
-console.log('QSM: LAYERS count =', LAYERS.length, LAYERS.map(function(l){return l.name;}));
+// Global variables
+var LAYERS  = [];
+var OPTIONS = {};
+var map;
+var curBM;
+var gLayers  = [];
+var allFeats = [];
+var bounds   = null;
+
 var PALETTE = ['#1e64c8','#e05c2a','#27a845','#8b2fc9',
                '#c8a01e','#c8285a','#1ec8b4','#6e6e6e'];
 
@@ -15,30 +19,39 @@ var isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || (
 // -- Sidebar toggle (mobile + desktop) ----------------------------------------
 var sidebarOpen = true;
 
-// On page load: reset sidebar state cleanly (fixes catbox URL issues)
-window.addEventListener('load', function() {
+// Helper function to decompress Gzip Base64
+async function decompressGeoJSON(base64Data) {
+  const binaryString = atob(base64Data);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  const stream = new Response(bytes).body.pipeThrough(new DecompressionStream("gzip"));
+  const decompressedResponse = new Response(stream);
+  const text = await decompressedResponse.text();
+  return JSON.parse(text);
+}
+
+function _syncSidebarState() {
   var sb  = document.getElementById('sidebar');
-  var map = document.getElementById('map');
+  var mapEl = document.getElementById('map');
   var crd = document.getElementById('coord');
-  var dt  = document.getElementById('desk-toggle');
   var ov  = document.getElementById('sb-overlay');
   if (!sb) return;
 
   if (isMobile) {
-    // Mobile: close sidebar, reset all inline styles
     sb.classList.remove('open');
     sb.style.transform = '';
     if (ov) { ov.classList.remove('on'); ov.style.display = ''; }
-    if (map) map.style.left = '';
+    if (mapEl) mapEl.style.left = '';
     if (crd) crd.style.left = '';
   } else {
-    // Desktop: force open sidebar and sync all state
     sidebarOpen = true;
     sb.style.transform  = '';
     sb.style.left       = '0';
-    if (map) map.style.left = '260px';
+    if (mapEl) mapEl.style.left = '260px';
     if (crd) crd.style.left = '260px';
-    // Wait for desk-toggle to be created, then set its position
     setTimeout(function() {
       var dtBtn = document.getElementById('desk-toggle');
       if (dtBtn) {
@@ -47,7 +60,7 @@ window.addEventListener('load', function() {
       }
     }, 100);
   }
-});
+}
 
 function toggleSidebar() {
   var sb = document.getElementById('sidebar');
@@ -69,20 +82,20 @@ function toggleSidebar() {
 
 function _applyDesktopSidebar() {
   var sb  = document.getElementById('sidebar');
-  var map = document.getElementById('map');
+  var mapEl = document.getElementById('map');
   var crd = document.getElementById('coord');
   var btn = document.getElementById('desk-toggle');
   var dtb = document.getElementById('desk-toggle');
   if (sidebarOpen) {
     sb.style.transform  = '';
-    map.style.left      = '260px';
+    if (mapEl) mapEl.style.left = '260px';
     if (crd) crd.style.left = '260px';
     if (btn) btn.innerHTML  = '&#9664;';
     if (btn) btn.title      = 'Collapse sidebar';
     if (dtb) { dtb.style.left = '260px'; dtb.innerHTML = '&#9664;'; }
   } else {
     sb.style.transform  = 'translateX(-260px)';
-    map.style.left      = '0';
+    if (mapEl) mapEl.style.left = '0';
     if (crd) crd.style.left = '0';
     if (btn) btn.innerHTML  = '&#9654;';
     if (btn) btn.title      = 'Expand sidebar';
@@ -129,62 +142,12 @@ var BMS = [
   null
 ];
 
-// -- Init map ------------------------------------------------------------------
-// Clear any existing Leaflet instance (happens when loading from catbox outerHTML)
-(function() {
-  var mapEl = document.getElementById('map');
-  if (!mapEl) return;
-  // Always remove any leftover Leaflet SVG from outerHTML baking
-  // _leaflet_id is lost during serialization so we check for SVG children instead
-  var kids = mapEl.querySelectorAll('.leaflet-pane, .leaflet-control-container, svg');
-  if (kids.length > 0) {
-    kids.forEach(function(k) { k.parentNode && k.parentNode.removeChild(k); });
-    // Also clear the leaflet id attribute
-    delete mapEl._leaflet_id;
-    mapEl.removeAttribute('data-leaflet-id');
-  }
-})();
-
-var map = L.map('map', {
-  center:[20,78], zoom:5,
-  tap: true,
-  tapTolerance: 20,
-  touchZoom: true,
-  bounceAtZoomLimits: false,
-  zoomControl: true
-});
-window.MAP = map;
-var curBM = BMS[0]; curBM.addTo(map);
-L.control.scale({imperial:false, position:'bottomright'}).addTo(map);
-
-// -- Desktop sidebar toggle button ---------------------------------------------
-(function() {
-  // Don't create if already exists (prevents duplicate on catbox URL)
-  if(document.getElementById('desk-toggle')) return;
-  var btn = document.createElement('button');
-  btn.id        = 'desk-toggle';
-  btn.innerHTML = '&#9664;';
-  btn.title     = 'Collapse sidebar';
-  // CSS media query handles mobile hiding — no JS needed
-  btn.style.cssText = 'position:fixed;top:50%;left:260px;transform:translate(-50%,-50%);z-index:2100;width:20px;height:48px;background:#1e3a8a;color:white;border:none;border-radius:0 6px 6px 0;cursor:pointer;font-size:10px;line-height:1;padding:0;box-shadow:2px 0 6px rgba(0,0,0,.3);transition:left .25s ease;display:flex;align-items:center;justify-content:center';
-  btn.onclick = function(){ toggleSidebar(); };
-  document.body.appendChild(btn);
-})();
-
-map.on('mousemove', function(e) {
-  var el = document.getElementById('coord');
-  if (el) el.textContent =
-    'Lat: ' + e.latlng.lat.toFixed(6) +
-    '   Lng: ' + e.latlng.lng.toFixed(6) +
-    '   Zoom: ' + map.getZoom();
-});
-
 // -- Basemap toggle ------------------------------------------------------------
 var curBMi = 0;
 function setBM(i) {
-  if (curBM) map.removeLayer(curBM);
+  if (curBM && map) map.removeLayer(curBM);
   curBM = BMS[i]; curBMi = i;
-  if (curBM) curBM.addTo(map);
+  if (curBM && map) curBM.addTo(map);
   document.querySelectorAll('.bmopt').forEach(function(el, j) {
     el.classList.toggle('cur', j === i);
   });
@@ -229,16 +192,14 @@ function showFI(feats) {
   });
   document.getElementById('fibody').innerHTML = h;
   var fiPanel = document.getElementById('fi');
-  fiPanel.style.display = '';  // clear any inline display:none
+  fiPanel.style.display = '';
   fiPanel.classList.add('on');
-  // On mobile scroll the info panel into view
   if (isMobile) {
     var fi = document.getElementById('fi');
     if (fi) setTimeout(function(){ fi.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 100);
   }
 }
 function closeFI() { document.getElementById('fi').classList.remove('on'); }
-map.on('click', function() { closeFI(); });
 
 // -- Mobile toolbar tool switching ---------------------------------------------
 var mobileTool = 'info';
@@ -256,268 +217,10 @@ function setMobileTool(tool) {
   } else if (tool === 'table') {
     toggleSidebar(); showTab('table');
   } else {
-    // info mode - close sidebar if open
     var sb = document.getElementById('sidebar');
     if (sb && sb.classList.contains('open')) closeSidebar();
   }
 }
-
-// -- Clear any pre-rendered content (from outerHTML upload)
-(function(){
-  var lctrl = document.getElementById('lctrl');
-  var sctrl = document.getElementById('sctrl');
-  var tlsel = document.getElementById('tlsel');
-  var twrap = document.getElementById('twrap');
-  if(lctrl) lctrl.innerHTML = '';
-  if(sctrl) sctrl.innerHTML = '';
-  if(tlsel) tlsel.innerHTML = '';
-  if(twrap) twrap.innerHTML = '';
-})();
-
-// -- Deduplicate layers (prevent same layer appearing twice)
-(function(){
-  var seen = {}, clean = [];
-  for(var i=0;i<LAYERS.length;i++){
-    if(!seen[LAYERS[i].name]){ seen[LAYERS[i].name]=true; clean.push(LAYERS[i]); }
-  }
-  LAYERS = clean;
-})();
-
-// -- Build layers --------------------------------------------------------------
-var gLayers  = [];
-var allFeats = [];
-var bounds   = null;
-
-// Deduplicate layers by name - prevent same layer rendering twice
-var _seen = {};
-var _unique = [];
-for (var _i = 0; _i < LAYERS.length; _i++) {
-  var _key = LAYERS[_i].name + '_' + (LAYERS[_i].count || 0);
-  if (!_seen[_key]) {
-    _seen[_key] = true;
-    _unique.push(LAYERS[_i]);
-  }
-}
-LAYERS = _unique;
-
-// Track rendered layer names to skip duplicates
-var _renderedNames = {};
-
-// Cache uploaded QR URL so re-clicking Share/QR reuses it
-var _cachedQRUrl = null;
-
-LAYERS.forEach(function(lyr, idx) {
-  // Skip if already rendered this layer name
-  if(_renderedNames[lyr.name]) { return; }
-  _renderedNames[lyr.name] = true;
-
-  var col = (lyr.style && lyr.style.color) ? lyr.style.color : PALETTE[idx % PALETTE.length];
-  var op  = (lyr.style && lyr.style.opacity) ? parseFloat(lyr.style.opacity) : 0.7;
-  if(isNaN(op) || op < 0.1) op = 0.7;
-
-  // ── RASTER layer: render as image overlay ────────────────────────────────
-  if(lyr.type === 'raster' && lyr.image && lyr.bounds) {
-    var bnds = [[lyr.bounds[0], lyr.bounds[1]], [lyr.bounds[2], lyr.bounds[3]]];
-    var overlay = L.imageOverlay(lyr.image, bnds, {opacity: op, interactive: true}).addTo(map);
-    gLayers.push(overlay);
-    // Click on raster - read pixel value from image using canvas
-    (function(lyrRef, ovRef) {
-      // Preload image into a canvas for pixel reading
-      var _canvas = document.createElement('canvas');
-      var _img    = new Image();
-      _img.src    = lyrRef.image;
-      _img.onload = function() {
-        _canvas.width  = _img.naturalWidth;
-        _canvas.height = _img.naturalHeight;
-        _canvas.getContext('2d').drawImage(_img, 0, 0);
-      };
-
-      ovRef.on('click', function(e) {
-        L.DomEvent.stopPropagation(e);
-        var lat = e.latlng.lat;
-        var lng = e.latlng.lng;
-
-        // Calculate pixel position from lat/lng
-        var minLat = lyrRef.bounds[0], minLng = lyrRef.bounds[1];
-        var maxLat = lyrRef.bounds[2], maxLng = lyrRef.bounds[3];
-        var px = Math.floor(((lng - minLng) / (maxLng - minLng)) * _canvas.width);
-        var py = Math.floor(((maxLat - lat) / (maxLat - minLat)) * _canvas.height);
-
-        var props = {
-          'Latitude':  lat.toFixed(6),
-          'Longitude': lng.toFixed(6),
-        };
-
-        // Read pixel RGBA from canvas
-        try {
-          var ctx = _canvas.getContext('2d');
-          var px2 = Math.max(0, Math.min(px, _canvas.width  - 1));
-          var py2 = Math.max(0, Math.min(py, _canvas.height - 1));
-          var pxData = ctx.getImageData(px2, py2, 1, 1).data;
-          var r = pxData[0], g = pxData[1], b = pxData[2], a = pxData[3];
-
-          if (a === 0) {
-            props['Pixel Value'] = 'No Data';
-          } else if (r === g && g === b) {
-            // Grayscale band - show as DN value
-            props['DN Value'] = r;
-            // Approximate reflectance (0-255 -> 0.0-1.0)
-            props['Reflectance'] = (r / 255.0).toFixed(4);
-          } else {
-            // RGB composite
-            props['Red Band']   = r;
-            props['Green Band'] = g;
-            props['Blue Band']  = b;
-          }
-        } catch(ex) {
-          props['Pixel Value'] = 'Unable to read';
-        }
-
-        props['Type']    = 'Raster Layer';
-        props['CRS']     = (lyrRef.stats && lyrRef.stats.crs) || 'Unknown';
-
-        showFI([{name: lyrRef.name, color: '#888888', props: props}]);
-      });
-    })(lyr, overlay);
-    try { var rb=L.latLngBounds(bnds); if(rb.isValid()) bounds=bounds?bounds.extend(rb):rb; } catch(e){}
-    var rcard = document.createElement('div');
-    rcard.className = 'lcard';
-    rcard.innerHTML =
-      '<div class="lhead"><div class="ldot" style="background:#888"></div>' +
-      '<span class="lname" title="'+escHtml(lyr.name)+'">'+escHtml(lyr.name)+'</span>' +
-      '<span class="ltag">Raster</span></div>' +
-      '<div class="lrow"><span class="llbl">Visible</span>' +
-      '<label class="tog"><input type="checkbox" id="v'+idx+'" checked><span class="sl"></span></label></div>' +
-      '<div class="oprow"><span class="oplbl">Opacity</span>' +
-      '<input type="range" min="0" max="1" step="0.05" value="1" id="o'+idx+'">' +
-      '<span class="opval" id="ov'+idx+'">100%</span></div>';
-    document.getElementById('lctrl').appendChild(rcard);
-    (function(i, ov, c){
-      document.getElementById('v'+i).onchange = function(){
-        if(this.checked){map.addLayer(ov);c.style.opacity='1';}
-        else{map.removeLayer(ov);c.style.opacity='0.4';}
-      };
-      document.getElementById('o'+i).oninput = function(){
-        var v=parseFloat(this.value);
-        ov.setOpacity(v);
-        document.getElementById('ov'+i).textContent=Math.round(v*100)+'%';
-      };
-    })(idx, overlay, rcard);
-    return;
-  }
-
-  // ── VECTOR layer ──────────────────────────────────────────────────────────
-  // Declare gl first so onEachFeature can safely reference it
-  var gl;
-  gl = L.geoJSON(lyr.geojson, {
-    style: function() {
-      return {color:col, weight:2, fillColor:col, fillOpacity:0.5, opacity:1};
-    },
-    pointToLayer: function(f, ll) {
-      return L.circleMarker(ll, {
-        radius: isMobile ? 14 : 6,  // much bigger tap target on mobile
-        fillColor:col, color:'#fff', weight:1.5, fillOpacity:0.8
-      });
-    },
-    onEachFeature: function(feat, layer) {
-      allFeats.push({lidx:idx, name:lyr.name, color:col, props:feat.properties, ll:layer});
-
-      // click works on both desktop AND mobile (Leaflet tap:true handles touch_click)
-      layer.on('click', function(e) {
-        L.DomEvent.stopPropagation(e);
-        showFI([{name:lyr.name, color:col, props:feat.properties}]);
-      });
-
-      // mouseover/mouseout only on desktop - they don't fire on mobile
-      if (!isMobile) {
-        layer.on('mouseover', function() {
-          if (layer.setStyle) layer.setStyle({weight:3, fillOpacity:0.8});
-          if (layer.bringToFront) layer.bringToFront();
-        });
-        layer.on('mouseout', function() {
-          if (gl) gl.resetStyle(layer);
-        });
-      }
-    }
-  }).addTo(map);
-  gLayers.push(gl);
-
-  try {
-    var b = gl.getBounds();
-    if (b.isValid()) bounds = bounds ? bounds.extend(b) : b;
-  } catch(e) {}
-
-  // Layer card
-  var lctrl = document.getElementById('lctrl');
-  var card  = document.createElement('div');
-  card.className = 'lcard';
-  card.innerHTML =
-    '<div class="lhead">' +
-      '<div class="ldot" style="background:'+col+'"></div>' +
-      '<span class="lname" title="'+escHtml(lyr.name)+'">'+escHtml(lyr.name)+'</span>' +
-      '<span class="ltag">'+escHtml((lyr.stats&&lyr.stats.geometry_type)||'Vector')+'</span>' +
-    '</div>' +
-    '<div class="lrow">' +
-      '<span class="llbl">Visible</span>' +
-      '<label class="tog"><input type="checkbox" id="v'+idx+'" checked><span class="sl"></span></label>' +
-    '</div>' +
-    '<div class="oprow">' +
-      '<span class="oplbl">Opacity</span>' +
-      '<input type="range" min="0" max="1" step="0.05" value="1" id="o'+idx+'">' +
-      '<span class="opval" id="ov'+idx+'">100%</span>' +
-    '</div>' +
-    '<div class="lrow">' +
-      '<span class="llbl">Colour</span>' +
-      '<input type="color" id="c'+idx+'" value="'+col+'" style="width:36px;height:24px;border:none;cursor:pointer;border-radius:4px;padding:0">' +
-    '</div>' +
-    '<div class="lcnt">'+Number(lyr.count||0).toLocaleString()+' features</div>';
-  lctrl.appendChild(card);
-
-  (function(i, g, c) {
-    document.getElementById('v'+i).onchange = function() {
-      if (this.checked) { map.addLayer(g); c.style.opacity='1'; }
-      else { map.removeLayer(g); c.style.opacity='0.4'; }
-    };
-    document.getElementById('o'+i).oninput = function() {
-      var v = parseFloat(this.value);
-      g.setStyle({fillOpacity:v*0.5, opacity:v});
-      document.getElementById('ov'+i).textContent = Math.round(v*100)+'%';
-    };
-    // Colour picker - change all features colour
-    var cp = document.getElementById('c'+i);
-    if(cp) cp.addEventListener('input', function(){
-      var nc = this.value;
-      g.eachLayer(function(l){ if(l.setStyle) l.setStyle({color:nc, fillColor:nc}); });
-      var dot = card.querySelector('.ldot');
-      if(dot) dot.style.background = nc;
-    });
-  })(idx, gl, card);
-
-  // Stats pane
-  var st = lyr.stats || {};
-  var sh = '<div class="sbox">' +
-    '<div class="stitle" style="color:'+col+'">'+escHtml(lyr.name)+'</div>' +
-    '<div class="srow"><span class="sk">Type</span><span class="sv">'+escHtml(st.geometry_type||'Vector')+'</span></div>' +
-    '<div class="srow"><span class="sk">Features</span><span class="sv">'+Number(st.feature_count||lyr.count||0).toLocaleString()+'</span></div>' +
-    '<div class="srow"><span class="sk">Fields</span><span class="sv">'+((st.fields||[]).length)+'</span></div>' +
-    '<div class="srow"><span class="sk">CRS</span><span class="sv">'+escHtml(st.crs||'WGS84')+'</span></div>';
-  if (st.total_length_km != null)
-    sh += '<div class="srow"><span class="sk">Length</span><span class="sv">'+Number(st.total_length_km).toLocaleString()+' km</span></div>';
-  if (st.total_area_km2 != null)
-    sh += '<div class="srow"><span class="sk">Area</span><span class="sv">'+Number(st.total_area_km2).toLocaleString()+' km&#178;</span></div>';
-  sh += '</div>';
-  document.getElementById('sctrl').innerHTML += sh;
-
-  // Table pane button
-  var tb = document.createElement('button');
-  tb.className = 'tlbtn'; tb.textContent = lyr.name; tb.style.background = col;
-  (function(i) { tb.onclick = function() { buildTable(i, 0); }; })(idx);
-  document.getElementById('tlsel').appendChild(tb);
-  if (idx === 0) buildTable(0, 0);
-});
-
-if (bounds && bounds.isValid()) map.fitBounds(bounds, {padding:[20,20]});
-setTimeout(function() { map.invalidateSize(); }, 300);
 
 // -- Attribute table -----------------------------------------------------------
 function buildTable(idx, page) {
@@ -571,7 +274,7 @@ function zoomRow(li, fi) {
   if (!feat) return;
   var col = (LAYERS[li].style && LAYERS[li].style.color) ? LAYERS[li].style.color : '#1e64c8';
   var l   = gLayers[li].getLayers()[fi];
-  if (l) {
+  if (l && map) {
     try {
       if (l.getBounds) map.fitBounds(l.getBounds(), {maxZoom:14});
       else if (l.getLatLng) map.setView(l.getLatLng(), 14);
@@ -621,7 +324,7 @@ function doSearch(q) {
 
 function goSearch(i) {
   var m = document.getElementById('sres')._m[i];
-  if (!m) return;
+  if (!m || !map) return;
   try {
     if (m.ll.getBounds) map.fitBounds(m.ll.getBounds(), {maxZoom:14});
     else if (m.ll.getLatLng) map.setView(m.ll.getLatLng(), 14);
@@ -632,64 +335,112 @@ function goSearch(i) {
 }
 
 // -- Share / QR ------------------------------------------------------------------
-function openShare() {
-  // If already on a web URL (opened via QR on mobile) — do nothing
-  if(window.location.protocol !== 'file:') {
-    return;
-  }
-  // If QR was already generated, show it directly without re-uploading
-  if(_cachedQRUrl) {
-    var m = document.getElementById('qrmodal');
-    if(m) m.style.display = 'flex';
-    document.getElementById('qr-step1').style.display = 'none';
-    document.getElementById('qr-step2').style.display = 'block';
-    document.getElementById('qr-error').style.display  = 'none';
-    if(document.getElementById('qr-progress-box'))
+var _localWifiUrl = window._localWifiUrl || null;
+var _publicShareUrl = window._publicShareUrl || null;
+
+function selectShareOption(opt) {
+  document.getElementById('qr-menu').style.display = 'none';
+  document.getElementById('qr-opt-wifi').style.display = 'none';
+  document.getElementById('qr-opt-public').style.display = 'none';
+  document.getElementById('qr-opt-github').style.display = 'none';
+
+  if (opt === 'wifi') {
+    document.getElementById('qr-opt-wifi').style.display = 'block';
+    if (_localWifiUrl) {
+      document.getElementById('wifi-not-ready').style.display = 'none';
+      document.getElementById('wifi-ready').style.display = 'block';
+      document.getElementById('wifi-url').value = _localWifiUrl;
+      showQRCodeOnCanvas(_localWifiUrl, 'wifi-qr-canvas');
+    } else {
+      document.getElementById('wifi-not-ready').style.display = 'block';
+      document.getElementById('wifi-ready').style.display = 'none';
+    }
+  } else if (opt === 'public') {
+    document.getElementById('qr-opt-public').style.display = 'block';
+    if (_publicShareUrl) {
+      document.getElementById('pub-upload-btn-box').style.display = 'none';
       document.getElementById('qr-progress-box').style.display = 'none';
-    document.getElementById('qr-success').style.display = 'block';
-    return;
+      document.getElementById('qr-success').style.display = 'block';
+      document.getElementById('qr-url').value = _publicShareUrl;
+      showQRCodeOnCanvas(_publicShareUrl, 'qr-canvas');
+    } else {
+      document.getElementById('pub-upload-btn-box').style.display = 'block';
+      document.getElementById('qr-progress-box').style.display = 'none';
+      document.getElementById('qr-success').style.display = 'none';
+      document.getElementById('qr-error').style.display = 'none';
+    }
+  } else if (opt === 'github') {
+    document.getElementById('qr-opt-github').style.display = 'block';
+    document.getElementById('gh-form').style.display = 'block';
+    document.getElementById('gh-progress').style.display = 'none';
+    document.getElementById('gh-success').style.display = 'none';
+    document.getElementById('gh-error').style.display = 'none';
+    try {
+      var savedToken = localStorage.getItem('iwv_github_token');
+      if (savedToken) {
+        document.getElementById('gh-token').value = savedToken;
+      }
+      var localBase = getLocalServerBase();
+      if (localBase) {
+        fetch(localBase + '/api/get_token')
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if (d.token) {
+            document.getElementById('gh-token').value = d.token;
+            localStorage.setItem('iwv_github_token', d.token);
+          }
+        }).catch(function(){});
+      }
+    } catch(e) {}
   }
+}
+
+function backToShareMenu() {
+  document.getElementById('qr-menu').style.display = 'block';
+  document.getElementById('qr-opt-wifi').style.display = 'none';
+  document.getElementById('qr-opt-public').style.display = 'none';
+  document.getElementById('qr-opt-github').style.display = 'none';
+}
+
+function openShare() {
   var m = document.getElementById('qrmodal');
-  if(!m) return;
-  // If already on a web URL, show a simpler message
-  if (window.location.protocol !== 'file:') {
-    // Already on web URL - just close the modal, nothing to do
-    m.style.display = 'none';
-    return;
-  }
-  document.getElementById('qr-step1').style.display = 'block';
-  document.getElementById('qr-step2').style.display = 'none';
-  document.getElementById('qr-error').style.display  = 'none';
-  document.getElementById('qr-canvas').innerHTML     = '';
-  document.getElementById('qr-url-box').style.display = 'none';
+  if (!m) return;
+  backToShareMenu();
   m.style.display = 'flex';
 }
 
-function generateQR() {
-  var step1 = document.getElementById('qr-step1');
-  var step2 = document.getElementById('qr-step2');
-  var errBox = document.getElementById('qr-error');
-  var prog   = document.getElementById('qr-progress-text');
-  step1.style.display  = 'none';
-  step2.style.display  = 'block';
-  errBox.style.display = 'none';
-  prog.textContent     = 'Uploading map... please wait';
+function getLocalServerBase() {
+  if (window._localWifiUrl) {
+    try {
+      var urlObj = new URL(window._localWifiUrl);
+      return urlObj.origin;
+    } catch(e) {}
+  }
+  if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+    return window.location.origin;
+  }
+  return "";
+}
 
-  // Clone document and clear dynamic content before uploading
-  // This prevents duplicate cards when mobile opens the uploaded HTML
+function generateQR() {
+  document.getElementById('pub-upload-btn-box').style.display = 'none';
+  var progBox = document.getElementById('qr-progress-box');
+  var progText = document.getElementById('qr-progress-text');
+  var errBox = document.getElementById('qr-error');
+  
+  progBox.style.display = 'block';
+  errBox.style.display = 'none';
+  progText.textContent = 'Uploading map... please wait';
+
   var docClone = document.documentElement.cloneNode(true);
-  // Clear entire Leaflet map content — it gets rebuilt fresh by JS on load
   var mapDiv = docClone.querySelector('#map');
   if(mapDiv) {
-    // Keep only the bmwrap (basemap selector), remove all Leaflet SVG
     var bmw = mapDiv.querySelector('#bmwrap');
     mapDiv.innerHTML = '';
     if(bmw) mapDiv.appendChild(bmw);
-    // Clear leaflet_id so L.map() can reinitialize
     mapDiv._leaflet_id = null;
     delete mapDiv._leaflet_id;
   }
-  // Hide feature info panel properly
   var fiEl = docClone.querySelector('#fi');
   if(fiEl) { fiEl.className = 'fi'; fiEl.style.display = ''; }
   var toEmpty = ['lctrl','sctrl','tlsel','twrap','fibody','sres'];
@@ -697,17 +448,14 @@ function generateQR() {
     var el = docClone.querySelector('#' + id);
     if(el) el.innerHTML = '';
   });
-  // Remove desk-toggle from clone — JS recreates it fresh on load
   var dtClone = docClone.querySelector('#desk-toggle');
   if(dtClone) dtClone.parentNode.removeChild(dtClone);
-  // Reset sidebar inline styles in clone
   var sbClone = docClone.querySelector('#sidebar');
   if(sbClone) { sbClone.style.transform=''; sbClone.classList.remove('open'); }
   var mapClone = docClone.querySelector('#map');
   if(mapClone) mapClone.style.left = '260px';
   var coordClone = docClone.querySelector('#coord');
   if(coordClone) coordClone.style.left = '260px';
-  // Hide modal and feature info
   var modal = docClone.querySelector('#qrmodal');
   if(modal) modal.style.display = 'none';
   var fi = docClone.querySelector('#fi');
@@ -716,58 +464,69 @@ function generateQR() {
   var html = docClone.outerHTML;
   var blob = new Blob([html], {type:'text/html'});
   var sizeMB = (blob.size / 1024 / 1024).toFixed(1);
-  prog.textContent = 'Uploading ' + sizeMB + ' MB...';
-
-  // Upload to catbox (reliable, no CORS issues)
-  var fd1 = new FormData();
-  fd1.append('reqtype', 'fileupload');
-  fd1.append('time', '72h');
-  fd1.append('fileToUpload', blob, 'qgis_map.html');
-  fetch('https://litterbox.catbox.moe/resources/internals/api.php',
-        {method:'POST', body:fd1})
-    .then(function(r){ return r.text(); })
-    .then(function(url){
-      url = url.trim();
-      if(url.indexOf('http')===0){ showQRCode(url); return; }
-      throw new Error('failed');
+  
+  var localBase = getLocalServerBase();
+  if (localBase) {
+    progText.textContent = 'Uploading ' + sizeMB + ' MB via Python backend...';
+    fetch(localBase + '/api/upload_public', {
+      method: 'POST',
+      body: html
     })
-    .catch(function(){
-      prog.textContent = 'Generating QR code...';
-      var fd2 = new FormData();
-      fd2.append('file', blob, 'qgis_map.html');
-      fetch('https://tmpfiles.org/api/v1/upload', {method:'POST', body:fd2})
-        .then(function(r){ return r.json(); })
-        .then(function(d){
-          if(d.data && d.data.url){
-            showQRCode(d.data.url.replace('tmpfiles.org/','tmpfiles.org/dl/'));
-          } else { throw new Error(); }
-        })
-        .catch(function(){
-          step2.style.display  = 'none';
-          errBox.style.display = 'block';
-        });
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.error) { throw new Error(d.error); }
+      var url = d.url;
+      if(url){
+        _publicShareUrl = url;
+        progBox.style.display = 'none';
+        document.getElementById('qr-success').style.display = 'block';
+        document.getElementById('qr-url').value = url;
+        showQRCodeOnCanvas(url, 'qr-canvas');
+      } else { throw new Error('No URL returned'); }
+    })
+    .catch(function(err){
+      progBox.style.display = 'none';
+      errBox.innerHTML = '<b>Upload failed.</b><br><br>' + err.message;
+      errBox.style.display = 'block';
     });
+  } else {
+    progText.textContent = 'Uploading ' + sizeMB + ' MB to PageDrop...';
+    var reader = new FileReader();
+    reader.readAsText(blob);
+    reader.onloadend = function() {
+      var htmlContent = reader.result;
+      fetch('https://pagedrop.io/api/upload', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({html: htmlContent, ttl: '3d'})
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var url = d.url || (d.data && d.data.url);
+        if(url){
+          _publicShareUrl = url;
+          progBox.style.display = 'none';
+          document.getElementById('qr-success').style.display = 'block';
+          document.getElementById('qr-url').value = url;
+          showQRCodeOnCanvas(url, 'qr-canvas');
+        } else { throw new Error(); }
+      })
+      .catch(function(){
+        progBox.style.display = 'none';
+        errBox.innerHTML = '<b>Upload failed.</b><br><br>Browser origin policies block direct uploads from local files. Keep QGIS open when using this button.';
+        errBox.style.display = 'block';
+      });
+    };
+  }
 }
 
-
-function showQRCode(url) {
-  _cachedQRUrl = url;  // cache for re-use
-  document.getElementById('qr-progress-box').style.display = 'none';
-  document.getElementById('qr-success').style.display = 'block';
-  // Re-enable button
-  var gb = document.getElementById('qr-gen-btn');
-  if(gb){ gb.disabled=false; gb.textContent='Generate QR Code'; gb.style.opacity='1'; }
-  document.getElementById('qr-host-info').textContent = 'Link valid for 24 hours';
-  var canvas = document.getElementById('qr-canvas');
+function showQRCodeOnCanvas(url, canvasId) {
+  var canvas = document.getElementById(canvasId);
+  if (!canvas) return;
   canvas.innerHTML = '';
 
-  // Show URL immediately so user can copy even if QR image fails
-  document.getElementById('qr-url').value = url;
-  document.getElementById('qr-url-box').style.display = 'block';
-
-  // Try QR image from multiple sources
   var img = document.createElement('img');
-  img.style.cssText = 'width:200px;height:200px;display:block;margin:0 auto 10px;border-radius:8px;border:1px solid #e2e8f0';
+  img.style.cssText = 'width:180px;height:180px;display:block;margin:0 auto 10px;border-radius:8px;border:1px solid #e2e8f0';
   img.alt = 'QR Code';
 
   var sources = [
@@ -782,15 +541,13 @@ function showQRCode(url) {
     if(srcIdx < sources.length) {
       img.src = sources[srcIdx];
     } else {
-      // All QR sources failed - show message with link
       canvas.innerHTML = '<div style="background:#eff6ff;border:1px solid #bfdbfe;' +
-        'border-radius:8px;padding:14px;color:#1e40af;font-size:.82rem;text-align:center">' +
-        'QR image blocked by network.<br><b>Copy the link below and open on phone.</b></div>';
+        'border-radius:8px;padding:14px;color:#1e40af;font-size:.75rem;text-align:center">' +
+        'QR image blocked by network.<br><b>Use the link below.</b></div>';
     }
   };
 
   img.onload = function() {
-    // QR loaded successfully - make sure it shows
     img.style.display = 'block';
   };
 
@@ -798,19 +555,494 @@ function showQRCode(url) {
   canvas.appendChild(img);
 }
 
-function copyQRUrl() {
-  var url = document.getElementById('qr-url').value;
-  if(navigator.clipboard){
-    navigator.clipboard.writeText(url).then(function(){
-      document.getElementById('qr-copy-btn').textContent = 'Copied!';
-      setTimeout(function(){
-        document.getElementById('qr-copy-btn').textContent = 'Copy Link';
-      }, 2000);
+function copyText(inputId, btnId) {
+  var url = document.getElementById(inputId).value;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(function() {
+      var btn = document.getElementById(btnId);
+      if (btn) {
+        var orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = orig; }, 2000);
+      }
+    }).catch(function() {
+      window.prompt('Copy link:', url);
     });
-  } else { window.prompt('Copy link:', url); }
+  } else {
+    var input = document.getElementById(inputId);
+    input.select();
+    input.setSelectionRange(0, 99999);
+    try {
+      document.execCommand('copy');
+      var btn = document.getElementById(btnId);
+      if (btn) {
+        var orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = orig; }, 2000);
+      }
+    } catch (err) {
+      window.prompt('Copy link:', url);
+    }
+  }
+}
+
+function b64EncodeUnicode(str) {
+  return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g,
+    function toSolidBytes(match, p1) {
+      return String.fromCharCode('0x' + p1);
+  }));
+}
+
+function publishToGithubFromBrowser() {
+  var token = document.getElementById('gh-token').value.trim();
+  if (!token) {
+    alert("Please enter a GitHub Personal Access Token.");
+    return;
+  }
+  try {
+    localStorage.setItem('iwv_github_token', token);
+  } catch(e) {}
+
+  var form = document.getElementById('gh-form');
+  var prog = document.getElementById('gh-progress');
+  var progText = document.getElementById('gh-progress-text');
+  var success = document.getElementById('gh-success');
+  var errBox = document.getElementById('gh-error');
+
+  form.style.display = 'none';
+  prog.style.display = 'block';
+  errBox.style.display = 'none';
+  success.style.display = 'none';
+
+  progText.textContent = 'Preparing upload payload...';
+
+  // Prepare Base64 payload
+  var docClone = document.documentElement.cloneNode(true);
+  var mapDiv = docClone.querySelector('#map');
+  if(mapDiv) {
+    var bmw = mapDiv.querySelector('#bmwrap');
+    mapDiv.innerHTML = '';
+    if(bmw) mapDiv.appendChild(bmw);
+    mapDiv._leaflet_id = null;
+    delete mapDiv._leaflet_id;
+  }
+  var fiEl = docClone.querySelector('#fi');
+  if(fiEl) { fiEl.className = 'fi'; fiEl.style.display = ''; }
+  var toEmpty = ['lctrl','sctrl','tlsel','twrap','fibody','sres'];
+  toEmpty.forEach(function(id){
+    var el = docClone.querySelector('#' + id);
+    if(el) el.innerHTML = '';
+  });
+  var dtClone = docClone.querySelector('#desk-toggle');
+  if(dtClone) dtClone.parentNode.removeChild(dtClone);
+  var sbClone = docClone.querySelector('#sidebar');
+  if(sbClone) { sbClone.style.transform=''; sbClone.classList.remove('open'); }
+  var mapClone = docClone.querySelector('#map');
+  if(mapClone) mapClone.style.left = '260px';
+  var coordClone = docClone.querySelector('#coord');
+  if(coordClone) coordClone.style.left = '260px';
+  var modal = docClone.querySelector('#qrmodal');
+  if(modal) modal.style.display = 'none';
+  var fi = docClone.querySelector('#fi');
+  if(fi) { fi.className = 'fi'; fi.style.display = ''; }
+
+  var htmlContent = docClone.outerHTML;
+
+  var localBase = getLocalServerBase();
+  if (localBase) {
+    progText.textContent = 'Uploading via Python backend (no CORS limits)...';
+    fetch(localBase + '/api/upload_github', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token: token, html: htmlContent})
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.error) throw new Error(d.error);
+      var url = d.url;
+      prog.style.display = 'none';
+      success.style.display = 'block';
+      document.getElementById('gh-url').value = url;
+      showQRCodeOnCanvas(url, 'gh-qr-canvas');
+    })
+    .catch(function(e){
+      prog.style.display = 'none';
+      form.style.display = 'block';
+      errBox.textContent = e.message || 'Upload failed.';
+      errBox.style.display = 'block';
+    });
+  } else {
+    progText.textContent = 'Authenticating with GitHub...';
+    var owner = '';
+    var repo = 'iwv-maps';
+    var branch = 'main';
+
+    fetch('https://api.github.com/user', {
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/vnd.github+json'
+      }
+    })
+    .then(function(r) {
+      if (r.status !== 200) throw new Error("Invalid GitHub Token.");
+      return r.json();
+    })
+    .then(function(user) {
+      owner = user.login;
+      progText.textContent = 'Checking repository "iwv-maps"...';
+      return fetch('https://api.github.com/repos/' + owner + '/' + repo, {
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Accept': 'application/vnd.github+json'
+        }
+      });
+    })
+    .then(function(r) {
+      if (r.status === 404) {
+        progText.textContent = 'Creating repository "iwv-maps" on GitHub...';
+        return fetch('https://api.github.com/user/repos', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + token,
+            'Content-Type': 'application/json',
+            'Accept': 'application/vnd.github+json'
+          },
+          body: JSON.stringify({
+            name: repo,
+            private: false,
+            auto_init: true,
+            description: 'Maps shared from Instant WebGIS Viewer'
+          })
+        });
+      } else if (r.status === 200) {
+        return r.json();
+      } else {
+        throw new Error("Repository check failed.");
+      }
+    })
+    .then(function() {
+      var b64Content = b64EncodeUnicode(htmlContent);
+      var ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15);
+      var filename = 'maps/map-' + ts + '.html';
+
+      progText.textContent = 'Uploading map to GitHub...';
+      return fetch('https://api.github.com/repos/' + owner + '/' + repo + '/contents/' + filename, {
+        method: 'PUT',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/json',
+          'Accept': 'application/vnd.github+json'
+        },
+        body: JSON.stringify({
+          message: 'Add map ' + ts,
+          content: b64Content,
+          branch: branch
+        })
+      });
+    })
+    .then(function(r) {
+      if (r.status !== 200 && r.status !== 201) throw new Error("Upload failed.");
+      return r.json();
+    })
+    .then(function(commit) {
+      var path = commit.content.path;
+      var url = 'https://raw.githack.com/' + owner + '/' + repo + '/' + branch + '/' + path;
+      
+      prog.style.display = 'none';
+      success.style.display = 'block';
+      document.getElementById('gh-url').value = url;
+      showQRCodeOnCanvas(url, 'gh-qr-canvas');
+    })
+    .catch(function(e) {
+      prog.style.display = 'none';
+      form.style.display = 'block';
+      errBox.textContent = e.message || 'GitHub failed.';
+      errBox.style.display = 'block';
+    });
+  }
 }
 
 var _qrm = document.getElementById('qrmodal');
 if(_qrm) _qrm.addEventListener('click', function(e){
   if(e.target===this) this.style.display='none';
 });
+
+// -- App Async Initialization -------------------------------------------------
+async function startApp() {
+  // 1) Read and decompress data
+  try {
+    var optsEl = document.getElementById('qsm-opts');
+    if (optsEl) OPTIONS = JSON.parse(optsEl.textContent || '{}');
+  } catch(e) {}
+
+  var gzipEl = document.getElementById('qsm-data-gzip');
+  if (gzipEl) {
+    try {
+      LAYERS = await decompressGeoJSON(gzipEl.textContent.trim());
+    } catch(e) {
+      console.error("Decompression failed", e);
+    }
+  } else {
+    var rawEl = document.getElementById('qsm-data');
+    if (rawEl) {
+      try { LAYERS = JSON.parse(rawEl.textContent || '[]'); } catch(e) {}
+    }
+  }
+
+  console.log('QSM: LAYERS count =', LAYERS.length, LAYERS.map(function(l){return l.name;}));
+
+  // 2) Sidebar sync
+  _syncSidebarState();
+
+  // 3) Init map
+  var mapEl = document.getElementById('map');
+  if (mapEl) {
+    var kids = mapEl.querySelectorAll('.leaflet-pane, .leaflet-control-container, svg');
+    if (kids.length > 0) {
+      kids.forEach(function(k) { k.parentNode && k.parentNode.removeChild(k); });
+      delete mapEl._leaflet_id;
+      mapEl.removeAttribute('data-leaflet-id');
+    }
+  }
+
+  map = L.map('map', {
+    center:[20,78], zoom:5,
+    tap: true,
+    tapTolerance: 20,
+    touchZoom: true,
+    bounceAtZoomLimits: false,
+    zoomControl: true
+  });
+  window.MAP = map;
+  curBM = BMS[0]; curBM.addTo(map);
+  L.control.scale({imperial:false, position:'bottomright'}).addTo(map);
+
+  // 4) Desktop sidebar toggle button
+  if(!document.getElementById('desk-toggle')) {
+    var btn = document.createElement('button');
+    btn.id        = 'desk-toggle';
+    btn.innerHTML = '&#9664;';
+    btn.title     = 'Collapse sidebar';
+    btn.style.cssText = 'position:fixed;top:50%;left:260px;transform:translate(-50%,-50%);z-index:2100;width:20px;height:48px;background:#1e3a8a;color:white;border:none;border-radius:0 6px 6px 0;cursor:pointer;font-size:10px;line-height:1;padding:0;box-shadow:2px 0 6px rgba(0,0,0,.3);transition:left .25s ease;display:flex;align-items:center;justify-content:center';
+    btn.onclick = function(){ toggleSidebar(); };
+    document.body.appendChild(btn);
+  }
+
+  map.on('mousemove', function(e) {
+    var el = document.getElementById('coord');
+    if (el) el.textContent =
+      'Lat: ' + e.latlng.lat.toFixed(6) +
+      '   Lng: ' + e.latlng.lng.toFixed(6) +
+      '   Zoom: ' + map.getZoom();
+  });
+  map.on('click', function() { closeFI(); });
+
+  // 5) Clear any pre-rendered content
+  var lctrl = document.getElementById('lctrl');
+  var sctrl = document.getElementById('sctrl');
+  var tlsel = document.getElementById('tlsel');
+  var twrap = document.getElementById('twrap');
+  if(lctrl) lctrl.innerHTML = '';
+  if(sctrl) sctrl.innerHTML = '';
+  if(tlsel) tlsel.innerHTML = '';
+  if(twrap) twrap.innerHTML = '';
+
+  // 6) Deduplicate layers
+  var seen = {}, clean = [];
+  for(var i=0;i<LAYERS.length;i++){
+    if(!seen[LAYERS[i].name]){ seen[LAYERS[i].name]=true; clean.push(LAYERS[i]); }
+  }
+  LAYERS = clean;
+
+  var _seen = {};
+  var _unique = [];
+  for (var _i = 0; _i < LAYERS.length; _i++) {
+    var _key = LAYERS[_i].name + '_' + (LAYERS[_i].count || 0);
+    if (!_seen[_key]) {
+      _seen[_key] = true;
+      _unique.push(LAYERS[_i]);
+    }
+  }
+  LAYERS = _unique;
+
+  // 7) Build layers
+  var _renderedNames = {};
+  LAYERS.forEach(function(lyr, idx) {
+    if(_renderedNames[lyr.name]) { return; }
+    _renderedNames[lyr.name] = true;
+
+    var col = (lyr.style && lyr.style.color) ? lyr.style.color : PALETTE[idx % PALETTE.length];
+    var op  = (lyr.style && lyr.style.opacity) ? parseFloat(lyr.style.opacity) : 0.7;
+    if(isNaN(op) || op < 0.1) op = 0.7;
+
+    // RASTER layer
+    if(lyr.type === 'raster' && lyr.image && lyr.bounds) {
+      var bnds = [[lyr.bounds[0], lyr.bounds[1]], [lyr.bounds[2], lyr.bounds[3]]];
+      var overlay = L.imageOverlay(lyr.image, bnds, {opacity: op, interactive: true}).addTo(map);
+      gLayers.push(overlay);
+      (function(lyrRef, ovRef) {
+        var _canvas = document.createElement('canvas');
+        var _img    = new Image();
+        _img.src    = lyrRef.image;
+        _img.onload = function() {
+          _canvas.width  = _img.naturalWidth;
+          _canvas.height = _img.naturalHeight;
+          _canvas.getContext('2d').drawImage(_img, 0, 0);
+        };
+        ovRef.on('click', function(e) {
+          L.DomEvent.stopPropagation(e);
+          var lat = e.latlng.lat;
+          var lng = e.latlng.lng;
+          var minLat = lyrRef.bounds[0], minLng = lyrRef.bounds[1];
+          var maxLat = lyrRef.bounds[2], maxLng = lyrRef.bounds[3];
+          var px = Math.floor(((lng - minLng) / (maxLng - minLng)) * _canvas.width);
+          var py = Math.floor(((maxLat - lat) / (maxLat - minLat)) * _canvas.height);
+          var props = {'Latitude': lat.toFixed(6), 'Longitude': lng.toFixed(6)};
+          try {
+            var ctx = _canvas.getContext('2d');
+            var px2 = Math.max(0, Math.min(px, _canvas.width  - 1));
+            var py2 = Math.max(0, Math.min(py, _canvas.height - 1));
+            var pxData = ctx.getImageData(px2, py2, 1, 1).data;
+            var r = pxData[0], g = pxData[1], b = pxData[2], a = pxData[3];
+            if (a === 0) props['Pixel Value'] = 'No Data';
+            else if (r === g && g === b) { props['DN Value'] = r; props['Reflectance'] = (r / 255.0).toFixed(4); }
+            else { props['Red Band'] = r; props['Green Band'] = g; props['Blue Band'] = b; }
+          } catch(ex) { props['Pixel Value'] = 'Unable to read'; }
+          props['Type'] = 'Raster Layer';
+          props['CRS'] = (lyrRef.stats && lyrRef.stats.crs) || 'Unknown';
+          showFI([{name: lyrRef.name, color: '#888888', props: props}]);
+        });
+      })(lyr, overlay);
+      try { var rb=L.latLngBounds(bnds); if(rb.isValid()) bounds=bounds?bounds.extend(rb):rb; } catch(e){}
+      var rcard = document.createElement('div');
+      rcard.className = 'lcard';
+      rcard.innerHTML =
+        '<div class="lhead"><div class="ldot" style="background:#888"></div>' +
+        '<span class="lname" title="'+escHtml(lyr.name)+'">'+escHtml(lyr.name)+'</span>' +
+        '<span class="ltag">Raster</span></div>' +
+        '<div class="lrow"><span class="llbl">Visible</span>' +
+        '<label class="tog"><input type="checkbox" id="v'+idx+'" checked><span class="sl"></span></label></div>' +
+        '<div class="oprow"><span class="oplbl">Opacity</span>' +
+        '<input type="range" min="0" max="1" step="0.05" value="1" id="o'+idx+'">' +
+        '<span class="opval" id="ov'+idx+'">100%</span></div>';
+      document.getElementById('lctrl').appendChild(rcard);
+      (function(i, ov, c){
+        document.getElementById('v'+i).onchange = function(){
+          if(this.checked){map.addLayer(ov);c.style.opacity='1';}
+          else{map.removeLayer(ov);c.style.opacity='0.4';}
+        };
+        document.getElementById('o'+i).oninput = function(){
+          var v=parseFloat(this.value);
+          ov.setOpacity(v);
+          document.getElementById('ov'+i).textContent=Math.round(v*100)+'%';
+        };
+      })(idx, overlay, rcard);
+      return;
+    }
+
+    // VECTOR layer
+    var gl;
+    gl = L.geoJSON(lyr.geojson, {
+      style: function() {
+        return {color:col, weight:2, fillColor:col, fillOpacity:0.5, opacity:1};
+      },
+      pointToLayer: function(f, ll) {
+        return L.circleMarker(ll, {
+          radius: isMobile ? 14 : 6,
+          fillColor:col, color:'#fff', weight:1.5, fillOpacity:0.8
+        });
+      },
+      onEachFeature: function(feat, layer) {
+        allFeats.push({lidx:idx, name:lyr.name, color:col, props:feat.properties, ll:layer});
+        layer.on('click', function(e) {
+          L.DomEvent.stopPropagation(e);
+          showFI([{name:lyr.name, color:col, props:feat.properties}]);
+        });
+        if (!isMobile) {
+          layer.on('mouseover', function() {
+            if (layer.setStyle) layer.setStyle({weight:3, fillOpacity:0.8});
+            if (layer.bringToFront) layer.bringToFront();
+          });
+          layer.on('mouseout', function() {
+            if (gl) gl.resetStyle(layer);
+          });
+        }
+      }
+    }).addTo(map);
+    gLayers.push(gl);
+
+    try {
+      var b = gl.getBounds();
+      if (b.isValid()) bounds = bounds ? bounds.extend(b) : b;
+    } catch(e) {}
+
+    var card  = document.createElement('div');
+    card.className = 'lcard';
+    card.innerHTML =
+      '<div class="lhead">' +
+        '<div class="ldot" style="background:'+col+'"></div>' +
+        '<span class="lname" title="'+escHtml(lyr.name)+'">'+escHtml(lyr.name)+'</span>' +
+        '<span class="ltag">'+escHtml((lyr.stats&&lyr.stats.geometry_type)||'Vector')+'</span>' +
+      '</div>' +
+      '<div class="lrow">' +
+        '<span class="llbl">Visible</span>' +
+        '<label class="tog"><input type="checkbox" id="v'+idx+'" checked><span class="sl"></span></label>' +
+      '</div>' +
+      '<div class="oprow">' +
+        '<span class="oplbl">Opacity</span>' +
+        '<input type="range" min="0" max="1" step="0.05" value="1" id="o'+idx+'">' +
+        '<span class="opval" id="ov'+idx+'">100%</span>' +
+      '</div>' +
+      '<div class="lrow">' +
+        '<span class="llbl">Colour</span>' +
+        '<input type="color" id="c'+idx+'" value="'+col+'" style="width:36px;height:24px;border:none;cursor:pointer;border-radius:4px;padding:0">' +
+      '</div>' +
+      '<div class="lcnt">'+Number(lyr.count||0).toLocaleString()+' features</div>';
+    document.getElementById('lctrl').appendChild(card);
+
+    (function(i, g, c) {
+      document.getElementById('v'+i).onchange = function() {
+        if (this.checked) { map.addLayer(g); c.style.opacity='1'; }
+        else { map.removeLayer(g); c.style.opacity='0.4'; }
+      };
+      document.getElementById('o'+i).oninput = function() {
+        var v = parseFloat(this.value);
+        g.setStyle({fillOpacity:v*0.5, opacity:v});
+        document.getElementById('ov'+i).textContent = Math.round(v*100)+'%';
+      };
+      var cp = document.getElementById('c'+i);
+      if(cp) cp.addEventListener('input', function(){
+        var nc = this.value;
+        g.eachLayer(function(l){ if(l.setStyle) l.setStyle({color:nc, fillColor:nc}); });
+        var dot = card.querySelector('.ldot');
+        if(dot) dot.style.background = nc;
+      });
+    })(idx, gl, card);
+
+    var st = lyr.stats || {};
+    var sh = '<div class="sbox">' +
+      '<div class="stitle" style="color:'+col+'">'+escHtml(lyr.name)+'</div>' +
+      '<div class="srow"><span class="sk">Type</span><span class="sv">'+escHtml(st.geometry_type||'Vector')+'</span></div>' +
+      '<div class="srow"><span class="sk">Features</span><span class="sv">'+Number(st.feature_count||lyr.count||0).toLocaleString()+'</span></div>' +
+      '<div class="srow"><span class="sk">Fields</span><span class="sv">'+((st.fields||[]).length)+'</span></div>' +
+      '<div class="srow"><span class="sk">CRS</span><span class="sv">'+escHtml(st.crs||'WGS84')+'</span></div>';
+    if (st.total_length_km != null)
+      sh += '<div class="srow"><span class="sk">Length</span><span class="sv">'+Number(st.total_length_km).toLocaleString()+' km</span></div>';
+    if (st.total_area_km2 != null)
+      sh += '<div class="srow"><span class="sk">Area</span><span class="sv">'+Number(st.total_area_km2).toLocaleString()+' km&#178;</span></div>';
+    sh += '</div>';
+    document.getElementById('sctrl').innerHTML += sh;
+
+    var tb = document.createElement('button');
+    tb.className = 'tlbtn'; tb.textContent = lyr.name; tb.style.background = col;
+    (function(i) { tb.onclick = function() { buildTable(i, 0); }; })(idx);
+    document.getElementById('tlsel').appendChild(tb);
+    if (idx === 0) buildTable(0, 0);
+  });
+
+  if (bounds && bounds.isValid()) map.fitBounds(bounds, {padding:[20,20]});
+  setTimeout(function() { map.invalidateSize(); }, 300);
+}
+
+// Start application async
+window.addEventListener('DOMContentLoaded', startApp);

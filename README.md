@@ -1,12 +1,4 @@
-# Instant WebGIS Viewer — QGIS Plugin by Ballu Harish
-
-**Author:** Ballu Harish | WebGIS Developer, INCOIS Hyderabad  
-**Plugin ID:** 5413  
-**Download:** https://plugins.qgis.org/plugins/instant_webgis_viewer/  
-**Portfolio:** https://harimss-webgis.github.io/Website-Harish/  
-**GeoSpy Game:** https://harimss-webgis.github.io/geo-quest-finder/  
-
----
+# Instant WebGIS Viewer — QGIS Plugin
 
 **Export any QGIS vector or raster layer to a fully interactive shareable HTML map in one click.**
 
@@ -25,7 +17,7 @@ No server. No Apache. No configuration. Just click Export and share!
 | 🔍 **Feature Search** | Search any attribute value across all layers |
 | 📍 **Feature Info Popup** | Click any feature to see all its attributes |
 | 🗺 **9 Basemaps** | OSM, USGS Imagery, Topo, Carto Dark/Light, ESRI Street/Imagery, BrightGray, None |
-| 📱 **QR Code Sharing** | Upload map and get QR code — scan with phone to open full interactive map |
+| 📱 **QR + Link Sharing** | One click makes a QR code + link. People you share with just scan/tap — no account or setup needed to view |
 | 🖨 **Print Button** | One-click print-ready map output |
 | 📴 **Works Offline** | Exported HTML is fully self-contained, no internet needed to view |
 
@@ -65,8 +57,55 @@ No server. No Apache. No configuration. Just click Export and share!
 5. Click **Export Map**
 6. Open the HTML file in any browser
 
-### To open on mobile
-Click **Share / QR** in the exported map → Generate QR Code → scan with phone camera → full interactive map opens!
+### Sharing your map (QR code + link)
+
+After exporting, in the **"Map Exported!"** window click **Create Share Link + QR**.
+The plugin publishes your map to the internet and shows you a **QR code + a link**.
+Scan the QR with your phone camera, or send the link to anyone — the full
+interactive map opens in their browser.
+
+**Who needs what — please read:**
+
+- **People you SHARE a map with** (you send them the QR or link): they need
+  **nothing at all** — no account, no token, no setup. They just scan or click,
+  and the map opens. This is anyone, anywhere in the world.
+
+- **You (or any user) creating a Share/QR on a NORMAL network** (home, most
+  internet connections): just click **Create Share Link + QR**. The plugin uses
+  free public hosts automatically. **No token needed.**
+
+- **You (or any user) creating a Share/QR on a BLOCKED network** (many office /
+  college / government networks block file-sharing sites): the free hosts won't
+  work there. In that case the plugin offers a one-time **GitHub** option. You
+  paste a free GitHub token once and your maps are published from your own GitHub
+  account. See **"Sharing on a blocked network"** below. (If you don't want to do
+  this, just try again later from a normal network or a phone hotspot.)
+
+> Not sure if your network is blocked? Just click the button. If it gives you a
+> link, you're fine. Only if it fails will it ask about GitHub.
+
+### Sharing on a blocked network (one-time GitHub setup)
+
+Only needed if the free hosts are blocked on your network. It's free and you do
+it once per computer. **Never share your token with anyone** — it is like your
+GitHub password. Each person sets up their own; their maps go to their own account.
+
+1. Create a free account at **github.com** and sign in.
+2. Open **https://github.com/settings/tokens** (Settings → Developer settings →
+   Personal access tokens → **Tokens (classic)**).
+3. Click **Generate new token → Generate new token (classic)**.
+4. **Note:** type anything, e.g. `QGIS map sharing`.
+5. **Expiration:** choose **No expiration** (so you never have to redo it).
+6. **Select scopes:** tick the **`repo`** box (the items under it tick
+   automatically — that's correct). Tick nothing else.
+7. Click **Generate token**, then **copy** the code that starts with `ghp_...`
+   **immediately** — GitHub shows it only once.
+8. In QGIS, click **Create Share Link + QR** and paste the token when asked.
+   It's saved on this computer, so you won't be asked again.
+
+Your maps are published to a **public** repository called `iwv-maps` in your
+account (public so the links open for anyone). You can delete any map anytime
+from that repo.
 
 ---
 

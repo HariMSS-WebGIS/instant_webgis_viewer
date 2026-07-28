@@ -91,6 +91,16 @@ def compute_stats(layer):
     return stats
 
 
+def round_coordinates(obj, precision=6):
+    if isinstance(obj, float):
+        return round(obj, precision)
+    if isinstance(obj, list):
+        return [round_coordinates(x, precision) for x in obj]
+    if isinstance(obj, dict):
+        return {k: round_coordinates(v, precision) for k, v in obj.items()}
+    return obj
+
+
 def export_geojson(layer):
     wgs84 = QgsCoordinateReferenceSystem('EPSG:4326')
     transform = QgsCoordinateTransform(layer.crs(), wgs84, QgsProject.instance())
@@ -112,9 +122,11 @@ def export_geojson(layer):
                     props[field.name()] = str(val).replace('\x00','').replace('\r',' ')
                 except Exception:
                     props[field.name()] = None
+        
+        geom_dict = round_coordinates(json.loads(geom.asJson()))
         features.append({
             'type': 'Feature',
-            'geometry': json.loads(geom.asJson()),
+            'geometry': geom_dict,
             'properties': props,
         })
     return {'type': 'FeatureCollection', 'features': features}

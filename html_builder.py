@@ -24,6 +24,13 @@ def build(title, layers_data, options, out_path):
 
     clean     = _sanitize(layers_data)
     data_json = json.dumps(clean,   ensure_ascii=True, separators=(',', ':'))
+    
+    # Compress data_json using gzip + base64
+    import gzip
+    import base64
+    compressed = gzip.compress(data_json.encode('utf-8'))
+    data_gzip_b64 = base64.b64encode(compressed).decode('ascii')
+    
     opts_json = json.dumps(options, ensure_ascii=True)
     # Keep data_block for backward compat but it's unused now
     data_block = ''
@@ -33,7 +40,7 @@ def build(title, layers_data, options, out_path):
     with open(plugin_js_path, 'r', encoding='utf-8') as f:
         app_js_block = f.read()
 
-    html = _html(title, count, total, data_json, opts_json, app_js_block)
+    html = _html(title, count, total, data_gzip_b64, opts_json, app_js_block)
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(html)
 
@@ -51,7 +58,7 @@ def _sanitize(obj):
     return obj
 
 
-def _html(title, count, total, data_json, opts_json, app_js_block):
+def _html(title, count, total, data_gzip_b64, opts_json, app_js_block):
     safe_title = (title
                   .replace('&', '&amp;')
                   .replace('<', '&lt;')
@@ -356,36 +363,11 @@ tr:active td{background:#1e3a5a}
 
 <div class="coord" id="coord">Tap a feature for info &middot; pinch to zoom</div>
 
-<!-- Inline data — safe JSON script tag -->
-<script id="qsm-data" type="application/json">
-""" + data_json + """</script>
+<!-- Inline data — compressed Gzip Base64 script tag -->
+<script id="qsm-data-gzip" type="text/plain">
+""" + data_gzip_b64 + """</script>
 <script id="qsm-opts" type="application/json">
 """ + opts_json + """</script>
-
-<!-- On web URL: hide Share button and prevent any modal from opening -->
-<script>
-(function(){
-  var isWeb = window.location.protocol !== 'file:';
-  if(!isWeb) return;
-  // Hide share button
-  window.addEventListener('DOMContentLoaded', function(){
-    var sb = document.getElementById('share-btn');
-    if(sb) sb.style.display = 'none';
-    // Force close modal if somehow opened
-    var m = document.getElementById('qrmodal');
-    if(m) m.style.display = 'none';
-  });
-  // Override generateQR and openShare to do nothing on web
-  window.generateQR = function(){ 
-    var m = document.getElementById('qrmodal');
-    if(m) m.style.display = 'none';
-  };
-  window.openShare = function(){
-    var m = document.getElementById('qrmodal');
-    if(m) m.style.display = 'none';
-  };
-})();
-</script>
 <!-- Inline app logic — embedded at export time -->
 <script>
 """ + app_js_block + """</script>
@@ -422,84 +404,169 @@ tr:active td{background:#1e3a5a}
 <!-- QR Share Modal -->
 <div id="qrmodal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);
   z-index:9999;align-items:center;justify-content:center">
-  <div style="background:white;border-radius:12px;padding:22px;width:90%;max-width:360px;
+  <div style="background:white;border-radius:12px;padding:22px;width:90%;max-width:380px;
     box-shadow:0 8px 40px rgba(0,0,0,.3);text-align:center">
 
-    <!-- Step 1: Prompt -->
-    <div id="qr-step1">
-      <h3 style="color:#1e293b;margin-bottom:8px;font-size:1rem">Share Map on Mobile</h3>
-      <p style="color:#64748b;font-size:.82rem;margin-bottom:14px">
-        Upload your map to the web and get a QR code.<br>
-        Scan with phone camera - full interactive map opens!
-      </p>
-      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;
-        padding:10px;margin-bottom:14px;text-align:left;font-size:.77rem;color:#475569">
-        What happens:<br>
-        1. Map uploads to a free server<br>
-        2. You get a real web link + QR code<br>
-        3. Scan QR - full map opens on phone!<br>
-        <span style="color:#94a3b8;font-size:.7rem">Link expires in 24 hours.</span>
-      </div>
-      <button id="qr-gen-btn" onclick="generateQR()"
+    <!-- Menu Selection -->
+    <div id="qr-menu">
+      <h3 style="color:#1e293b;margin-bottom:12px;font-size:1.05rem">Share Map / Generate QR</h3>
+      <p style="color:#64748b;font-size:.8rem;margin-bottom:18px">Select how you want to share this map:</p>
+      
+      <button onclick="selectShareOption('wifi')"
         style="width:100%;background:#1e64c8;color:white;border:none;border-radius:8px;
-        padding:11px;cursor:pointer;font-size:.9rem;font-weight:700;margin-bottom:8px;
-        transition:opacity .2s">
-        Generate QR Code
+        padding:12px;cursor:pointer;font-size:.88rem;font-weight:700;margin-bottom:10px;text-align:left;display:flex;align-items:center;justify-content:space-between">
+        <span>📶 Share on Local WiFi (No Token)</span><span>&rarr;</span>
       </button>
+      
+      <button onclick="selectShareOption('public')"
+        style="width:100%;background:#0f766e;color:white;border:none;border-radius:8px;
+        padding:12px;cursor:pointer;font-size:.88rem;font-weight:700;margin-bottom:10px;text-align:left;display:flex;align-items:center;justify-content:space-between">
+        <span>🔗 Create Public Link (No Token)</span><span>&rarr;</span>
+      </button>
+      
+      <button onclick="selectShareOption('github')"
+        style="width:100%;background:#24292f;color:white;border:none;border-radius:8px;
+        padding:12px;cursor:pointer;font-size:.88rem;font-weight:700;margin-bottom:16px;text-align:left;display:flex;align-items:center;justify-content:space-between">
+        <span>🐙 Publish to GitHub (Needs Token)</span><span>&rarr;</span>
+      </button>
+
       <button onclick="document.getElementById('qrmodal').style.display='none'"
         style="width:100%;background:#f1f5f9;color:#64748b;border:none;border-radius:8px;
         padding:9px;cursor:pointer;font-size:.82rem">Cancel</button>
     </div>
 
-    <!-- Step 2: Uploading / Result -->
-    <div id="qr-step2" style="display:none">
-      <h3 style="color:#1e293b;margin-bottom:14px;font-size:1rem">Share Map on Mobile</h3>
-      <div id="qr-progress-box" style="background:#eff6ff;border:1px solid #bfdbfe;
+    <!-- Option: Local WiFi -->
+    <div id="qr-opt-wifi" style="display:none">
+      <h3 style="color:#1e293b;margin-bottom:10px;font-size:1rem">Share on Local WiFi</h3>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:.78rem;color:#334155;text-align:left;margin-bottom:14px;line-height:1.4">
+        <b>📶 Local WiFi sharing information:</b><br>
+        • This option lets you share your map locally on your network without uploading to the internet.<br>
+        • To open, make sure QGIS is open on your PC and your phone is connected to the same WiFi/Local Network.
+      </div>
+      <div id="wifi-not-ready" style="display:none;background:#fef3f2;border:1px solid #fecaca;border-radius:8px;padding:12px;font-size:.78rem;color:#b91c1c;text-align:left;margin-bottom:14px">
+        <b>Local WiFi server is not running.</b><br><br>
+        To share via local WiFi, make sure you open QGIS, load this map, and click <b>Share on Local WiFi</b> in the plugin first to start the server.
+      </div>
+      <div id="wifi-ready" style="display:none">
+        <p style="color:#64748b;font-size:.8rem;margin-bottom:10px">Scan QR code to open the map on your phone (must be on the same WiFi network):</p>
+        <div id="wifi-qr-canvas" style="margin:10px auto;text-align:center"></div>
+        <div style="font-size:.72rem;color:#64748b;margin-bottom:4px">Or share this URL:</div>
+        <div style="display:flex;gap:6px;margin-bottom:10px">
+          <input id="wifi-url" readonly onclick="this.select()"
+            style="flex:1;font-size:.7rem;padding:5px 8px;border:1px solid #e2e8f0;
+            border-radius:6px;background:#f8fafc;color:#334155">
+          <button id="wifi-copy-btn" onclick="copyText('wifi-url', 'wifi-copy-btn')"
+            style="background:#1e64c8;color:white;border:none;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:.72rem">Copy</button>
+        </div>
+      </div>
+      <button onclick="backToShareMenu()"
+        style="width:100%;background:#f1f5f9;color:#64748b;border:none;border-radius:8px;padding:9px;cursor:pointer;font-size:.82rem">Back</button>
+    </div>
+
+    <!-- Option: Public Link (No Token) -->
+    <div id="qr-opt-public" style="display:none">
+      <h3 style="color:#1e293b;margin-bottom:8px;font-size:1rem">Create Public Share Link</h3>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:.78rem;color:#334155;text-align:left;margin-bottom:14px;line-height:1.4">
+        <b>🔗 Public link sharing information:</b><br>
+        • This option uploads your map to PageDrop to generate a public link valid for 3 days.<br>
+        • <b>Note:</b> If the link does not load (for example, if PageDrop is blocked in your network), please go for Option 3.
+      </div>
+      
+      <div id="pub-upload-btn-box">
+        <button onclick="generateQR()"
+          style="width:100%;background:#0f766e;color:white;border:none;border-radius:8px;
+          padding:11px;cursor:pointer;font-size:.9rem;font-weight:700;margin-bottom:12px">
+          Upload Map &amp; Generate QR
+        </button>
+      </div>
+
+      <div id="qr-progress-box" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;
         border-radius:8px;padding:14px;margin-bottom:12px;color:#1e40af;font-size:.85rem">
         <div style="font-size:1.4rem;margin-bottom:6px">&#9203;</div>
         <div id="qr-progress-text">Uploading...</div>
       </div>
+
       <div id="qr-success" style="display:none">
         <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;
           padding:8px;margin-bottom:10px;color:#16a34a;font-weight:700;font-size:.85rem">
-          Uploaded! Open Camera app &amp; point at QR code (do not use Google Lens)
+          Uploaded! Scan to open on mobile:
         </div>
-        <div style="font-size:.7rem;color:#64748b;margin-bottom:4px" id="qr-host-info"></div>
         <div id="qr-canvas" style="margin:10px auto;text-align:center"></div>
-        <div id="qr-url-box" style="display:none;margin-top:10px">
-          <div style="font-size:.72rem;color:#64748b;margin-bottom:4px">Or share this link:</div>
-          <div style="display:flex;gap:6px">
-            <input id="qr-url" readonly onclick="this.select()"
-              style="flex:1;font-size:.7rem;padding:5px 8px;border:1px solid #e2e8f0;
-              border-radius:6px;background:#f8fafc;color:#334155">
-            <button id="qr-copy-btn" onclick="copyQRUrl()"
-              style="background:#1e64c8;color:white;border:none;border-radius:6px;
-              padding:6px 10px;cursor:pointer;font-size:.72rem;white-space:nowrap">
-              Copy</button>
-          </div>
+        <div id="qr-url-box" style="margin-top:10px">
+          <input id="qr-url" readonly onclick="this.select()"
+            style="width:100%;font-size:.7rem;padding:6px;border:1px solid #e2e8f0;
+            border-radius:6px;background:#f8fafc;color:#334155;margin-bottom:6px">
+          <button id="qr-copy-btn" onclick="copyText('qr-url', 'qr-copy-btn')"
+            style="width:100%;background:#0f766e;color:white;border:none;border-radius:6px;
+            padding:7px;cursor:pointer;font-size:.75rem">Copy Public Link</button>
         </div>
       </div>
-      <button onclick="document.getElementById('qrmodal').style.display='none'"
-        style="width:100%;background:#f1f5f9;color:#64748b;border:none;border-radius:8px;
-        padding:9px;cursor:pointer;font-size:.82rem;margin-top:12px">Close</button>
+
+      <div id="qr-error" style="display:none;background:#fef3f2;border:1px solid #fecaca;border-radius:8px;
+        padding:12px;font-size:.8rem;color:#b91c1c;text-align:left;margin-bottom:12px">
+        <b>Upload failed.</b><br>
+        Browser origin policies block direct uploads from local files. For large maps or reliable sharing, use the QGIS export panel instead.
+      </div>
+
+      <button onclick="backToShareMenu()"
+        style="width:100%;background:#f1f5f9;color:#64748b;border:none;border-radius:8px;padding:9px;cursor:pointer;font-size:.82rem;margin-top:8px">Back</button>
     </div>
 
-    <!-- Error -->
-    <div id="qr-error" style="display:none">
-      <h3 style="color:#1e293b;margin-bottom:14px;font-size:1rem">&#128241; Share Map on Mobile</h3>
-      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;
-        padding:14px;margin-bottom:14px;font-size:.85rem;color:#1e40af;text-align:center">
-        Please click on Try Again for getting QR code
+    <!-- Option: GitHub (Needs Token) -->
+    <div id="qr-opt-github" style="display:none">
+      <h3 style="color:#1e293b;margin-bottom:8px;font-size:1rem">Publish to GitHub</h3>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:.78rem;color:#334155;text-align:left;margin-bottom:14px;line-height:1.4;max-height:160px;overflow-y:auto">
+        <b>🐙 GitHub publishing information:</b><br>
+        1. Register for a GitHub account.<br>
+        2. Go to <a href="https://github.com/settings/tokens" target="_blank" style="color:#2563eb;text-decoration:underline">https://github.com/settings/tokens</a>.<br>
+        3. Click <b>Generate new token</b> and select <b>Generate new token (classic)</b>.<br>
+        4. Verify the security code which you receive in your mail.<br>
+        5. Enter a <b>Note</b> and set <b>Expiration</b> (which might be 7/30/60/90 days, custom, or no expiration). <i>Note: If the time period ends, you must repeat the entire process again.</i><br>
+        6. Select the <b>repo</b> checkbox.<br>
+        7. Click <b>Generate token</b> at the bottom, copy it, and paste it into the field below.<br>
+        • This token is valid until your selected time in the step above. Once the time period ends, repeat the process again and paste your new token here in the publish GitHub token input field.
       </div>
-      <button onclick="generateQR()"
-        style="width:100%;background:#1e64c8;color:white;border:none;border-radius:8px;
-        padding:11px;cursor:pointer;font-size:.9rem;font-weight:700;margin-bottom:8px">
-        Try Again
-      </button>
-      <button onclick="document.getElementById('qrmodal').style.display='none'"
-        style="width:100%;background:#f1f5f9;color:#64748b;border:none;border-radius:8px;
-        padding:9px;cursor:pointer;font-size:.82rem">Close</button>
+      
+      <div id="gh-form">
+        <input id="gh-token" type="password" placeholder="Paste GitHub Token..."
+          style="width:100%;font-size:.8rem;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;margin-bottom:10px;outline:none">
+        <button onclick="publishToGithubFromBrowser()"
+          style="width:100%;background:#24292f;color:white;border:none;border-radius:8px;
+          padding:10px;cursor:pointer;font-size:.84rem;font-weight:700;margin-bottom:12px">
+          Publish Map
+        </button>
+      </div>
+
+      <div id="gh-progress" style="display:none;background:#f1f5f9;border:1px solid #e2e8f0;
+        border-radius:8px;padding:12px;margin-bottom:12px;font-size:.8rem;color:#475569">
+        <div style="font-size:1.2rem;margin-bottom:4px">&#9203;</div>
+        <div id="gh-progress-text">Connecting to GitHub...</div>
+      </div>
+
+      <div id="gh-success" style="display:none">
+        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;
+          padding:8px;margin-bottom:10px;color:#16a34a;font-weight:700;font-size:.85rem">
+          Published to GitHub! Scan QR:
+        </div>
+        <div id="gh-qr-canvas" style="margin:10px auto;text-align:center"></div>
+        <input id="gh-url" readonly onclick="this.select()"
+          style="width:100%;font-size:.7rem;padding:6px;border:1px solid #e2e8f0;
+          border-radius:6px;background:#f8fafc;color:#334155;margin-bottom:6px">
+        <button id="gh-copy-btn" onclick="copyText('gh-url', 'gh-copy-btn')"
+          style="width:100%;background:#24292f;color:white;border:none;border-radius:6px;
+          padding:7px;cursor:pointer;font-size:.75rem;margin-bottom:12px">Copy Link</button>
+      </div>
+
+      <div id="gh-error" style="display:none;background:#fef3f2;border:1px solid #fecaca;border-radius:8px;
+        padding:12px;font-size:.78rem;color:#b91c1c;text-align:left;margin-bottom:12px">
+      </div>
+
+      <button onclick="backToShareMenu()"
+        style="width:100%;background:#f1f5f9;color:#64748b;border:none;border-radius:8px;padding:9px;cursor:pointer;font-size:.82rem">Back</button>
     </div>
+
+  </div>
+</div>
 
   </div>
 </div>

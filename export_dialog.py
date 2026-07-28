@@ -12,12 +12,12 @@ from qgis.PyQt.QtWidgets import (
     QListWidgetItem, QFileDialog, QDialogButtonBox,
     QMessageBox, QProgressBar, QApplication, QCheckBox
 )
-from qgis.PyQt.QtCore import Qt, QT_VERSION_STR
+from qgis.PyQt.QtCore import Qt, QT_VERSION_STR, QUrl
 from qgis.core import (QgsProject, QgsVectorLayer, QgsRasterLayer,
     QgsCoordinateReferenceSystem, QgsCoordinateTransform,
     QgsRectangle, QgsMapRendererParallelJob, QgsMapSettings)
 from qgis.PyQt.QtCore import QSize
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtGui import QColor, QDesktopServices
 from .layer_utils import get_layer_style, compute_stats, export_geojson
 from . import html_builder
 
@@ -212,6 +212,17 @@ class ExportDialog(QDialog):
             )
             self._step(100, 'Done!')
 
+            # Start local WiFi server automatically so the local URL is ready and injected
+            local_url = None
+            try:
+                from . import share_uploader
+                local_url = share_uploader.LocalMapServer.start_serving(out)
+                self._inject_cached_url(out, local_url, is_local_wifi=True)
+            except Exception:
+                pass
+
+
+
             # ── Post-export dialog with sharing guidance ──────────────────────
             msg = QMessageBox(self)
             msg.setWindowTitle('Map Exported!')
@@ -222,8 +233,7 @@ class ExportDialog(QDialog):
                 '<b style="font-size:11pt">&#10003; Map exported successfully!</b><br><br>'
                 'Layers: <b>' + str(len(layers_data)) + '</b> &nbsp;&nbsp; '
                 'Features: <b>' + str(total) + '</b><br><br>'
-                '<small>Open the HTML file in your browser, then click <b>Share / QR</b> '
-                'to generate a QR code and share on mobile.</small>'
+                '<small>Open the HTML file in your browser to view the map and share it.</small>'
             )
 
             msg.setText(share_tips)
@@ -233,8 +243,12 @@ class ExportDialog(QDialog):
             msg.addButton(MB_Ok)
             msg.exec()
 
-            if msg.clickedButton() == ob:
-                webbrowser.open('file:///' + out.replace('\\', '/'))
+            clicked = msg.clickedButton()
+            if clicked == ob:
+                if local_url:
+                    QDesktopServices.openUrl(QUrl(local_url))
+                else:
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(out))
 
             self.accept()
 
@@ -294,3 +308,266 @@ class ExportDialog(QDialog):
     def _step(self, v, msg):
         self.progress.setValue(v); self.status.setText(msg)
         QApplication.processEvents()
+
+    # ── Share link + QR (Local WiFi & Fallback chain) ────────────────────────
+    def _share_local_wifi(self, out):
+        try:
+            from . import share_uploader
+        except Exception as e:
+            QMessageBox.critical(self, 'Share', 'Uploader module missing:\n' + str(e))
+            return
+
+        wait_cursor = (Qt.CursorShape.WaitCursor if _qt6 else Qt.WaitCursor)
+        QApplication.setOverrideCursor(wait_cursor)
+        url, err = None, None
+        try:
+            url = share_uploader.LocalMapServer.start_serving(out)
+        except Exception as e:
+            err = str(e)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if not url:
+            QMessageBox.critical(self, 'Local WiFi Share Failed', 'Could not start local server:\n' + str(err))
+            return
+
+        try:
+            self._inject_cached_url(out, url, is_local_wifi=True)
+        except Exception:
+            pass
+
+        dlg = _ShareDialog(url, 'Available while QGIS is open and connected to the same WiFi', 'Local WiFi Server',
+                           self.iface.mainWindow())
+        dlg.exec()
+
+    def _share_public_link(self, out):
+        try:
+            from . import share_uploader
+        except Exception as e:
+            QMessageBox.critical(self, 'Share', 'Uploader module missing:\n' + str(e))
+            return
+
+        wait_cursor = (Qt.CursorShape.WaitCursor if _qt6 else Qt.WaitCursor)
+        QApplication.setOverrideCursor(wait_cursor)
+        result, err = None, None
+        try:
+            result = share_uploader.upload_public(out)
+        except Exception as e:
+            err = str(e)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if not result or not result.get('url'):
+            is_too_large = any(x in (err or '').lower() for x in ('too large', '413', 'payload'))
+            box = QMessageBox(self)
+            box.setWindowTitle('Public Share Failed')
+            box.setIcon(QMessageBox.Icon.Warning if _qt6 else QMessageBox.Warning)
+            box.setTextFormat(RichText)
+            if is_too_large:
+                box.setText(
+                    '<b>Map is too large for the public web host.</b><br><br>'
+                    'This dataset contains too many features (e.g. roads/lines) to upload to the free server.<br><br>'
+                    '<b>Solution:</b> Use the <b>"Share on Local WiFi"</b> option instead! It has no size limits and works instantly for anyone on your network.'
+                )
+            else:
+                box.setText(
+                    '<b>Could not create a public share link.</b><br><br>'
+                    'The anonymous file host is blocked or unreachable on your network.<br><br>'
+                    '<small>' + (err or '').replace('<', '&lt;')[:500] + '</small>')
+            box.exec()
+            return
+
+        url = result['url']
+        try:
+            self._inject_cached_url(out, url)
+        except Exception:
+            pass
+
+        dlg = _ShareDialog(url, result.get('expiry', ''), result.get('host', ''),
+                           self.iface.mainWindow())
+        dlg.exec()
+
+    # ── Share link + QR (GitHub only) ───────────────────────────────────────
+    def _make_share_link(self, out):
+        from qgis.PyQt.QtWidgets import QApplication, QInputDialog
+        from qgis.PyQt.QtCore import Qt as _Qt
+        from qgis.core import QgsSettings
+        try:
+            from . import share_uploader
+        except Exception as e:
+            QMessageBox.critical(self, 'Share', 'Uploader module missing:\n' + str(e))
+            return
+
+        s = QgsSettings()
+        token = s.value('InstantWebGISViewer/github_token', '', type=str)
+        owner = s.value('InstantWebGISViewer/github_owner', '', type=str) or None
+        repo  = s.value('InstantWebGISViewer/github_repo', 'iwv-maps', type=str) or 'iwv-maps'
+
+        # Ask for the token once (then it's saved for this computer)
+        if not token:
+            token, ok = QInputDialog.getText(
+                self, 'Publish to GitHub',
+                'Paste your GitHub token to publish this map.\n\n'
+                'Make one (free, once) at:\n'
+                'GitHub - Settings - Developer settings - Personal access\n'
+                'tokens - Tokens (classic) - Generate new - tick "repo".\n\n'
+                'Token:')
+            if not (ok and token.strip()):
+                return
+            token = token.strip()
+            s.setValue('InstantWebGISViewer/github_token', token)
+
+        wait_cursor = (_Qt.CursorShape.WaitCursor if _qt6 else _Qt.WaitCursor)
+        QApplication.setOverrideCursor(wait_cursor)
+        result, err = None, None
+        try:
+            result = share_uploader.upload_github(out, token, owner, repo)
+        except Exception as e:
+            err = str(e)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if not result or not result.get('url'):
+            # if the saved token was bad, clear it so the next try re-asks
+            if err and ('token' in err.lower() or 'bad credentials' in err.lower()
+                        or '401' in err):
+                s.setValue('InstantWebGISViewer/github_token', '')
+            box = QMessageBox(self)
+            box.setWindowTitle('Share link failed')
+            box.setIcon(QMessageBox.Icon.Warning if _qt6 else QMessageBox.Warning)
+            box.setTextFormat(RichText)
+            box.setText(
+                '<b>Could not publish to GitHub.</b><br><br>'
+                'Check that your token is correct (it needs the <b>repo</b> scope) '
+                'and that GitHub is reachable on this network.<br><br>'
+                '<small>' + (err or '').replace('<', '&lt;')[:500] + '</small>')
+            box.exec()
+            return
+
+        # remember the owner GitHub resolved
+        try:
+            h = result.get('host', '')
+            inside = h[h.find('(') + 1:h.find(')')] if '(' in h else ''
+            if '/' in inside:
+                s.setValue('InstantWebGISViewer/github_owner', inside.split('/')[0])
+        except Exception:
+            pass
+
+        url = result['url']
+        try:
+            self._inject_cached_url(out, url)
+        except Exception:
+            pass
+
+        dlg = _ShareDialog(url, result.get('expiry', ''), result.get('host', ''),
+                           self.iface.mainWindow())
+        dlg.exec()
+
+    def _inject_cached_url(self, out, url, is_local_wifi=False):
+        """Insert a small script that populates the sharing URLs inside the page."""
+        with open(out, 'r', encoding='utf-8') as f:
+            html = f.read()
+        safe = url.replace('\\', '\\\\').replace('"', '\\"')
+        var_name = "_localWifiUrl" if is_local_wifi else "_publicShareUrl"
+        override = (
+            '<script>\n'
+            'window.' + var_name + ' = "' + safe + '";\n'
+            '</script>\n</body>'
+        )
+        if '</body>' in html:
+            html = html.replace('</body>', override, 1)
+            with open(out, 'w', encoding='utf-8') as f:
+                f.write(html)
+
+
+
+
+# ── QR / share-link dialog ────────────────────────────────────────────────────
+def _qr_pixmap(url):
+    """Return a QPixmap of a QR code for url, or None. Tries the local `qrcode`
+    library first, then downloads a PNG from api.qrserver.com."""
+    from qgis.PyQt.QtGui import QPixmap
+    # 1) local library (no network)
+    try:
+        import qrcode, io
+        img = qrcode.make(url)
+        buf = io.BytesIO(); img.save(buf, format='PNG')
+        pm = QPixmap(); pm.loadFromData(buf.getvalue())
+        if not pm.isNull():
+            return pm
+    except Exception:
+        pass
+    # 2) network fallback — keep it FAST so the popup never hangs on a slow
+    #    office network. Short timeout, try two services, then give up (the
+    #    link is always shown regardless).
+    import ssl, urllib.request, urllib.parse
+    q = urllib.parse.quote(url, safe='')
+    services = [
+        'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' + q,
+        'https://quickchart.io/qr?text=' + q + '&size=300',
+    ]
+    try:
+        ctx = ssl.create_default_context()
+    except Exception:
+        ctx = ssl._create_unverified_context()
+    for svc in services:
+        try:
+            req = urllib.request.Request(svc, headers={'User-Agent': 'Mozilla/5.0 IWV'})
+            data = urllib.request.urlopen(req, timeout=6, context=ctx).read()
+            pm = QPixmap(); pm.loadFromData(data)
+            if not pm.isNull():
+                return pm
+        except Exception:
+            continue
+    return None
+
+
+class _ShareDialog(QDialog):
+    def __init__(self, url, expiry, host, parent=None):
+        super().__init__(parent)
+        self.url = url
+        self.setWindowTitle('Share Map — QR + Link')
+        self.setMinimumWidth(360)
+        L = QVBoxLayout(self)
+        L.setSpacing(10)
+
+        head = QLabel('<b style="font-size:11pt">Scan to open on your phone</b><br>'
+                      '<small>Open the Camera app and point it at the QR code.</small>')
+        head.setTextFormat(RichText)
+        L.addWidget(head)
+
+        qr = QLabel()
+        qr.setAlignment(AlignCenter)
+        pm = _qr_pixmap(url)
+        if pm is not None:
+            from qgis.PyQt.QtCore import Qt as _Qt
+            mode = (_Qt.TransformationMode.SmoothTransformation if _qt6
+                    else _Qt.SmoothTransformation)
+            aspect = (_Qt.AspectRatioMode.KeepAspectRatio if _qt6 else _Qt.KeepAspectRatio)
+            qr.setPixmap(pm.scaled(240, 240, aspect, mode))
+        else:
+            qr.setText('(QR image unavailable — use the link below)')
+        L.addWidget(qr)
+
+        meta = QLabel('<small>' + (host or '') +
+                      (' · ' + expiry if expiry else '') + '</small>')
+        meta.setTextFormat(RichText); meta.setAlignment(AlignCenter)
+        L.addWidget(meta)
+
+        row = QHBoxLayout()
+        self.link = QLineEdit(url); self.link.setReadOnly(True)
+        copy = QPushButton('Copy')
+        copy.clicked.connect(self._copy)
+        row.addWidget(self.link); row.addWidget(copy)
+        L.addLayout(row)
+
+        brow = QHBoxLayout()
+        openb = QPushButton('Open link')
+        openb.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
+        closeb = QPushButton('Close')
+        closeb.clicked.connect(self.accept)
+        brow.addWidget(openb); brow.addStretch(); brow.addWidget(closeb)
+        L.addLayout(brow)
+
+    def _copy(self):
+        QApplication.clipboard().setText(self.url)
