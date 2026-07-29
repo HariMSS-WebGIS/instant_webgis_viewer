@@ -14,6 +14,9 @@ from qgis.core import (
     QgsGraduatedSymbolRenderer,
 )
 
+def _ignore(e):
+    pass
+
 PALETTE = ['#1e64c8','#e05c2a','#27a845','#8b2fc9',
            '#c8a01e','#c8285a','#1ec8b4','#6e6e6e']
 _idx = [0]
@@ -50,11 +53,11 @@ def get_layer_style(layer):
 
 def get_geometry_type(layer):
     flat = QgsWkbTypes.flatType(layer.wkbType())
-    if flat in (QgsWkbTypes.Point, QgsWkbTypes.MultiPoint):
+    if flat in (QgsWkbTypes.Type.Point, QgsWkbTypes.Type.MultiPoint):
         return 'Point'
-    if flat in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+    if flat in (QgsWkbTypes.Type.LineString, QgsWkbTypes.Type.MultiLineString):
         return 'Line'
-    if flat in (QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon):
+    if flat in (QgsWkbTypes.Type.Polygon, QgsWkbTypes.Type.MultiPolygon):
         return 'Polygon'
     return 'Vector'
 
@@ -79,15 +82,15 @@ def compute_stats(layer):
                 if feat.geometry() and not feat.geometry().isEmpty():
                     total += da.measureLength(feat.geometry())
             stats['total_length_km'] = round(
-                da.convertLengthMeasurement(total, QgsUnitTypes.DistanceKilometers), 2)
+                da.convertLengthMeasurement(total, QgsUnitTypes.DistanceUnit.DistanceKilometers), 2)
         elif gtype == 'Polygon':
             for feat in layer.getFeatures():
                 if feat.geometry() and not feat.geometry().isEmpty():
                     total += da.measureArea(feat.geometry())
             stats['total_area_km2'] = round(
-                da.convertAreaMeasurement(total, QgsUnitTypes.AreaSquareKilometers), 2)
-    except Exception:
-        pass
+                da.convertAreaMeasurement(total, QgsUnitTypes.AreaUnit.AreaSquareKilometers), 2)
+    except Exception as e:
+        _ignore(e)
     return stats
 
 

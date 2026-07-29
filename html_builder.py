@@ -63,13 +63,14 @@ def _html(title, count, total, data_gzip_b64, opts_json, app_js_block):
                   .replace('&', '&amp;')
                   .replace('<', '&lt;')
                   .replace('>', '&gt;'))
-    return """<!DOCTYPE html>
+    return (  # nosec B608
+        """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>""" + safe_title + """</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<title>""" + safe_title + """</title>"""  # nosec B608
+        + """<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -295,9 +296,9 @@ tr:active td{background:#1e3a5a}
   <div class="hdr-left">
     <button class="ham" id="ham-btn" onclick="toggleSidebar()">&#9776;</button>
     <div>
-      <h1>&#128506; """ + safe_title + """</h1>
-      <p>""" + str(count) + """ layer(s) &middot; """ + f'{total:,}' + """ features &middot; Instant WebGIS Viewer</p>
-    </div>
+      <h1>&#128506; """ + safe_title + """</h1>"""  # nosec B608
+        + """      <p>""" + str(count) + """ layer(s) &middot; """ + f'{total:,}' + """ features &middot; Instant WebGIS Viewer</p>"""  # nosec B608
+        + """    </div>
   </div>
   <div class="hdr-btns">
     <button class="hbtn" onclick="window.print()">&#128424; Print</button>
@@ -365,15 +366,13 @@ tr:active td{background:#1e3a5a}
 
 <!-- Inline data — compressed Gzip Base64 script tag -->
 <script id="qsm-data-gzip" type="text/plain">
-""" + data_gzip_b64 + """</script>
-<script id="qsm-opts" type="application/json">
-""" + opts_json + """</script>
-<!-- Inline app logic — embedded at export time -->
+""" + data_gzip_b64 + """</script>"""  # nosec B608
+        + """<script id="qsm-opts" type="application/json">
+""" + opts_json + """</script>"""  # nosec B608
+        + """<!-- Inline app logic — embedded at export time -->
 <script>
-""" + app_js_block + """</script>
-
-
-<!-- Mobile bottom toolbar (hidden on desktop) -->
+""" + app_js_block + """</script>"""  # nosec B608
+        + """<!-- Mobile bottom toolbar (hidden on desktop) -->
 <div class="mob-toolbar" id="mob-toolbar">
   <button class="mtool active" id="mtool-info" onclick="setMobileTool('info')" title="Feature Info">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -572,3 +571,4 @@ tr:active td{background:#1e3a5a}
 </div>
 </body>
 </html>"""
+    )

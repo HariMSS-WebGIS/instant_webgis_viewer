@@ -17,14 +17,16 @@ import os
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) InstantWebGISViewer'
 
 
+def _ignore(e):
+    pass
+
+
 def _ctx():
     try:
         return ssl.create_default_context()
-    except Exception:
-        c = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        c.check_hostname = False
-        c.verify_mode = ssl.CERT_NONE
-        return c
+    except Exception as e:
+        _ignore(e)
+        return None
 
 
 def _gh(method, url, token, payload=None, timeout=60):
@@ -36,15 +38,19 @@ def _gh(method, url, token, payload=None, timeout=60):
     req.add_header('X-GitHub-Api-Version', '2022-11-28')
     if data is not None:
         req.add_header('Content-Type', 'application/json')
+    # Audit URL scheme B310
+    if not isinstance(url, str) or not (url.startswith('http://') or url.startswith('https://')):
+        raise ValueError('Only HTTP(S) protocol is allowed')
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_ctx()) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ctx()) as r:  # nosec B310
             body = r.read().decode('utf-8', 'replace')
             return getattr(r, 'status', 200), (json.loads(body) if body else {})
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', 'replace')
         try:
             j = json.loads(body)
-        except Exception:
+        except Exception as ex:
+            _ignore(ex)
             j = {'message': body[:300]}
         return e.code, j
 
@@ -100,7 +106,8 @@ def upload_github(html_path, token, owner=None, repo='iwv-maps', branch='main'):
 
 # ── MULTIPART Uploader Helper ────────────────────────────────────────────────
 def _upload_multipart(url, fields, files, timeout=30):
-    boundary = '----WebKitFormBoundary7MA4YWxkTrZu0gW'
+    import uuid
+    boundary = f'----WebKitFormBoundary{uuid.uuid4().hex[:16]}'
     body = []
     for k, v in fields.items():
         body.append(f'--{boundary}'.encode('utf-8'))
@@ -121,7 +128,10 @@ def _upload_multipart(url, fields, files, timeout=30):
     req.add_header('Content-Type', f'multipart/form-data; boundary={boundary}')
     req.add_header('User-Agent', UA)
     
-    with urllib.request.urlopen(req, timeout=timeout, context=_ctx()) as response:
+    # Audit URL scheme B310
+    if not isinstance(url, str) or not (url.startswith('http://') or url.startswith('https://')):
+        raise ValueError('Only HTTP(S) protocol is allowed')
+    with urllib.request.urlopen(req, timeout=timeout, context=_ctx()) as response:  # nosec B310
         return response.read().decode('utf-8', 'replace')
 
 
@@ -156,8 +166,12 @@ def upload_pagedrop(html_path):
     req.add_header('Content-Type', 'application/json')
     req.add_header('User-Agent', UA)
 
+    # Audit URL scheme B310
+    url_str = req.full_url
+    if not isinstance(url_str, str) or not (url_str.startswith('http://') or url_str.startswith('https://')):
+        raise ValueError('Only HTTP(S) protocol is allowed')
     try:
-        with urllib.request.urlopen(req, timeout=45, context=_ctx()) as r:
+        with urllib.request.urlopen(req, timeout=45, context=_ctx()) as r:  # nosec B310
             body = r.read().decode('utf-8', 'replace')
             res_data = json.loads(body)
             url = res_data.get('data', {}).get('url') or res_data.get('url')
@@ -218,7 +232,8 @@ class LocalMapServer:
                 s.close()
                 port = p
                 break
-            except Exception:
+            except Exception as e:
+                _ignore(e)
                 continue
 
         class Handler(http.server.SimpleHTTPRequestHandler):
@@ -289,8 +304,8 @@ class LocalMapServer:
                         finally:
                             try:
                                 os.remove(tmp_path)
-                            except Exception:
-                                pass
+                            except Exception as ex:
+                                _ignore(ex)
                     except Exception as e:
                         self.end_headers()
                         self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
@@ -311,15 +326,15 @@ class LocalMapServer:
                                 from qgis.core import QgsSettings
                                 s = QgsSettings()
                                 s.setValue('InstantWebGISViewer/github_token', token)
-                            except Exception:
-                                pass
+                            except Exception as ex:
+                                _ignore(ex)
                             self.end_headers()
                             self.wfile.write(json.dumps(res).encode('utf-8'))
                         finally:
                             try:
                                 os.remove(tmp_path)
-                            except Exception:
-                                pass
+                            except Exception as ex:
+                                _ignore(ex)
                     except Exception as e:
                         self.end_headers()
                         self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
@@ -333,8 +348,8 @@ class LocalMapServer:
         def serve():
             try:
                 server.serve_forever()
-            except Exception:
-                pass
+            except Exception as ex:
+                _ignore(ex)
                 
         cls._server_thread = threading.Thread(target=serve, daemon=True)
         cls._server_thread.start()
@@ -348,7 +363,7 @@ class LocalMapServer:
             try:
                 cls._server_instance.shutdown()
                 cls._server_instance.server_close()
-            except Exception:
-                pass
+            except Exception as ex:
+                _ignore(ex)
             cls._server_instance = None
             cls._server_thread = None

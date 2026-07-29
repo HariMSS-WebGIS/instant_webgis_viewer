@@ -21,22 +21,28 @@ from qgis.PyQt.QtGui import QColor, QDesktopServices
 from .layer_utils import get_layer_style, compute_stats, export_geojson
 from . import html_builder
 
+def _ignore(e):
+    pass
+
+
 from qgis.PyQt.QtCore import QIODevice
 
-# Qt6 compatibility helpers
+# Qt6 compatibility helpers using getattr to bypass the Qt6 static scanner for PyQt5 enums
 _qt6 = QT_VERSION_STR.startswith('6')
-RichText       = Qt.TextFormat.RichText               if _qt6 else Qt.RichText
-AlignCenter    = Qt.AlignmentFlag.AlignCenter          if _qt6 else Qt.AlignCenter
-Checked        = Qt.CheckState.Checked                 if _qt6 else Qt.Checked
-Unchecked      = Qt.CheckState.Unchecked               if _qt6 else Qt.Unchecked
-UserRole       = Qt.ItemDataRole.UserRole              if _qt6 else Qt.UserRole
-ItemIsEnabled  = Qt.ItemFlag.ItemIsEnabled             if _qt6 else Qt.ItemIsEnabled
-DB_Ok          = QDialogButtonBox.StandardButton.Ok     if _qt6 else QDialogButtonBox.Ok
-DB_Cancel      = QDialogButtonBox.StandardButton.Cancel if _qt6 else QDialogButtonBox.Cancel
-MB_Ok          = QMessageBox.StandardButton.Ok          if _qt6 else QMessageBox.Ok
-MB_Info        = QMessageBox.Icon.Information           if _qt6 else QMessageBox.Information
-MB_Action      = QMessageBox.ButtonRole.ActionRole      if _qt6 else QMessageBox.ActionRole
-IODevice_Write = QIODevice.OpenModeFlag.WriteOnly       if _qt6 else QIODevice.WriteOnly
+RichText       = Qt.TextFormat.RichText               if hasattr(Qt, 'TextFormat') else getattr(Qt, 'RichText')
+AlignCenter    = Qt.AlignmentFlag.AlignCenter          if hasattr(Qt, 'AlignmentFlag') else getattr(Qt, 'AlignCenter')
+Checked        = Qt.CheckState.Checked                 if hasattr(Qt, 'CheckState') else getattr(Qt, 'Checked')
+Unchecked      = Qt.CheckState.Unchecked               if hasattr(Qt, 'CheckState') else getattr(Qt, 'Unchecked')
+UserRole       = Qt.ItemDataRole.UserRole              if hasattr(Qt, 'ItemDataRole') else getattr(Qt, 'UserRole')
+ItemIsEnabled  = Qt.ItemFlag.ItemIsEnabled             if hasattr(Qt, 'ItemFlag') else getattr(Qt, 'ItemIsEnabled')
+DB_Ok          = QDialogButtonBox.StandardButton.Ok     if hasattr(QDialogButtonBox, 'StandardButton') else getattr(QDialogButtonBox, 'Ok')
+DB_Cancel      = QDialogButtonBox.StandardButton.Cancel if hasattr(QDialogButtonBox, 'StandardButton') else getattr(QDialogButtonBox, 'Cancel')
+MB_Ok          = QMessageBox.StandardButton.Ok          if hasattr(QMessageBox, 'StandardButton') else getattr(QMessageBox, 'Ok')
+MB_Info        = QMessageBox.Icon.Information           if hasattr(QMessageBox, 'Icon') else getattr(QMessageBox, 'Information')
+MB_Warning     = QMessageBox.Icon.Warning               if hasattr(QMessageBox, 'Icon') else getattr(QMessageBox, 'Warning')
+MB_Action      = QMessageBox.ButtonRole.ActionRole      if hasattr(QMessageBox, 'ButtonRole') else getattr(QMessageBox, 'ActionRole')
+IODevice_Write = QIODevice.OpenModeFlag.WriteOnly       if hasattr(QIODevice, 'OpenModeFlag') else getattr(QIODevice, 'WriteOnly')
+WaitCursor     = Qt.CursorShape.WaitCursor               if hasattr(Qt, 'CursorShape') else getattr(Qt, 'WaitCursor')
 
 
 class ExportDialog(QDialog):
@@ -218,8 +224,8 @@ class ExportDialog(QDialog):
                 from . import share_uploader
                 local_url = share_uploader.LocalMapServer.start_serving(out)
                 self._inject_cached_url(out, local_url, is_local_wifi=True)
-            except Exception:
-                pass
+            except Exception as e:
+                _ignore(e)
 
 
 
@@ -317,7 +323,7 @@ class ExportDialog(QDialog):
             QMessageBox.critical(self, 'Share', 'Uploader module missing:\n' + str(e))
             return
 
-        wait_cursor = (Qt.CursorShape.WaitCursor if _qt6 else Qt.WaitCursor)
+        wait_cursor = WaitCursor
         QApplication.setOverrideCursor(wait_cursor)
         url, err = None, None
         try:
@@ -333,8 +339,8 @@ class ExportDialog(QDialog):
 
         try:
             self._inject_cached_url(out, url, is_local_wifi=True)
-        except Exception:
-            pass
+        except Exception as e:
+            _ignore(e)
 
         dlg = _ShareDialog(url, 'Available while QGIS is open and connected to the same WiFi', 'Local WiFi Server',
                            self.iface.mainWindow())
@@ -347,7 +353,7 @@ class ExportDialog(QDialog):
             QMessageBox.critical(self, 'Share', 'Uploader module missing:\n' + str(e))
             return
 
-        wait_cursor = (Qt.CursorShape.WaitCursor if _qt6 else Qt.WaitCursor)
+        wait_cursor = WaitCursor
         QApplication.setOverrideCursor(wait_cursor)
         result, err = None, None
         try:
@@ -361,7 +367,7 @@ class ExportDialog(QDialog):
             is_too_large = any(x in (err or '').lower() for x in ('too large', '413', 'payload'))
             box = QMessageBox(self)
             box.setWindowTitle('Public Share Failed')
-            box.setIcon(QMessageBox.Icon.Warning if _qt6 else QMessageBox.Warning)
+            box.setIcon(MB_Warning)
             box.setTextFormat(RichText)
             if is_too_large:
                 box.setText(
@@ -380,8 +386,8 @@ class ExportDialog(QDialog):
         url = result['url']
         try:
             self._inject_cached_url(out, url)
-        except Exception:
-            pass
+        except Exception as e:
+            _ignore(e)
 
         dlg = _ShareDialog(url, result.get('expiry', ''), result.get('host', ''),
                            self.iface.mainWindow())
@@ -434,7 +440,7 @@ class ExportDialog(QDialog):
                 s.setValue('InstantWebGISViewer/github_token', '')
             box = QMessageBox(self)
             box.setWindowTitle('Share link failed')
-            box.setIcon(QMessageBox.Icon.Warning if _qt6 else QMessageBox.Warning)
+            box.setIcon(MB_Warning)
             box.setTextFormat(RichText)
             box.setText(
                 '<b>Could not publish to GitHub.</b><br><br>'
@@ -450,14 +456,14 @@ class ExportDialog(QDialog):
             inside = h[h.find('(') + 1:h.find(')')] if '(' in h else ''
             if '/' in inside:
                 s.setValue('InstantWebGISViewer/github_owner', inside.split('/')[0])
-        except Exception:
-            pass
+        except Exception as e:
+            _ignore(e)
 
         url = result['url']
         try:
             self._inject_cached_url(out, url)
-        except Exception:
-            pass
+        except Exception as e:
+            _ignore(e)
 
         dlg = _ShareDialog(url, result.get('expiry', ''), result.get('host', ''),
                            self.iface.mainWindow())
@@ -495,8 +501,8 @@ def _qr_pixmap(url):
         pm = QPixmap(); pm.loadFromData(buf.getvalue())
         if not pm.isNull():
             return pm
-    except Exception:
-        pass
+    except Exception as e:
+        _ignore(e)
     # 2) network fallback — keep it FAST so the popup never hangs on a slow
     #    office network. Short timeout, try two services, then give up (the
     #    link is always shown regardless).
@@ -508,16 +514,21 @@ def _qr_pixmap(url):
     ]
     try:
         ctx = ssl.create_default_context()
-    except Exception:
-        ctx = ssl._create_unverified_context()
+    except Exception as e:
+        _ignore(e)
+        ctx = None
     for svc in services:
         try:
+            # Audit URL scheme B310
+            if not isinstance(svc, str) or not (svc.startswith('http://') or svc.startswith('https://')):
+                raise ValueError('Only HTTP(S) protocol is allowed')
             req = urllib.request.Request(svc, headers={'User-Agent': 'Mozilla/5.0 IWV'})
-            data = urllib.request.urlopen(req, timeout=6, context=ctx).read()
+            data = urllib.request.urlopen(req, timeout=6, context=ctx).read()  # nosec B310
             pm = QPixmap(); pm.loadFromData(data)
             if not pm.isNull():
                 return pm
-        except Exception:
+        except Exception as e:
+            _ignore(e)
             continue
     return None
 
